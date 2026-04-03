@@ -1,0 +1,70 @@
+{
+  "mac_unit": [
+    {
+      "expected": {
+        "acc_out": 14
+      },
+      "inputs": {
+        "a": 4,
+        "acc_in": 2,
+        "b": 3
+      },
+      "name": "positive_accumulate"
+    },
+    {
+      "expected": {
+        "acc_out": -20
+      },
+      "inputs": {
+        "a": -5,
+        "acc_in": 10,
+        "b": 6
+      },
+      "name": "signed_accumulate"
+    }
+  ],
+  "processing_element": [
+    {
+      "expected": {
+        "psum_o": 17,
+        "valid_o": 1
+      },
+      "inputs": {
+        "activation_i": 3,
+        "clear_acc": 0,
+        "compute_en": 1,
+        "psum_i": 5,
+        "weight_i": 4
+      },
+      "name": "compute_enabled"
+    },
+    {
+      "expected": {
+        "psum_o": 11,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": -2,
+        "clear_acc": 0,
+        "compute_en": 0,
+        "psum_i": 11,
+        "weight_i": 5
+      },
+      "name": "bypass_psum"
+    },
+    {
+      "expected": {
+        "psum_o": 0,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": 7,
+        "clear_acc": 1,
+        "compute_en": 1,
+        "psum_i": 99,
+        "weight_i": 8
+      },
+      "name": "clear_overrides_compute"
+    }
+  ]
+}

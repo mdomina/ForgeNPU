@@ -1,0 +1,993 @@
+{
+  "available": true,
+  "candidate_id": "balanced",
+  "cases": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "configurable_two_slot_program",
+      "program": {
+        "activation_slot0_i": [
+          1,
+          2
+        ],
+        "activation_slot1_i": [
+          3,
+          4
+        ],
+        "clear_on_done_i": 1,
+        "compute_iterations_i": 2,
+        "load_iterations_i": 2,
+        "slot_count_i": 2,
+        "weight_slot0_i": [
+          5,
+          6
+        ],
+        "weight_slot1_i": [
+          7,
+          8
+        ]
+      },
+      "rows": 2,
+      "summary": {
+        "busy_cycles": 9,
+        "compute_path": {
+          "clear_cycles": 1,
+          "compute_cycles": 2,
+          "estimated_mac_operations": 8,
+          "output_valid_cycles": 2,
+          "peak_abs_psum": 42,
+          "peak_valid_lanes": 4
+        },
+        "done_cycles": 1,
+        "idle_cycles": 1,
+        "memory_path": {
+          "activation_elements_transferred": 4,
+          "dma_activation_cycles": 2,
+          "dma_cycles": 4,
+          "dma_weight_cycles": 2,
+          "load_cycles": 2,
+          "weight_elements_transferred": 4
+        },
+        "scheduler_state_histogram": {
+          "CLEAR": 1,
+          "COMPUTE": 2,
+          "DMA_ACT": 2,
+          "DMA_WGT": 2,
+          "DONE": 1,
+          "IDLE": 1,
+          "LOAD": 2
+        },
+        "scheduler_state_sequence": [
+          "DMA_ACT",
+          "DMA_WGT",
+          "DMA_ACT",
+          "DMA_WGT",
+          "LOAD",
+          "LOAD",
+          "COMPUTE",
+          "COMPUTE",
+          "CLEAR",
+          "DONE",
+          "IDLE"
+        ],
+        "top_level_case_count": 1,
+        "total_cycles": 11
+      },
+      "top_npu_throughput": {
+        "architecture_pe_count": 5120,
+        "available": true,
+        "compute_cycles": 2,
+        "compute_duty_cycle": 0.181818,
+        "compute_duty_cycle_while_busy": 0.222222,
+        "estimated_effective_ops_per_cycle": 1861.818182,
+        "estimated_effective_tops": 1.861818,
+        "estimation_model": "peak_scaled_by_compute_duty_cycle",
+        "scheduler_overhead_cycles": 9,
+        "seed_compute_array_utilization": 0.181818,
+        "seed_effective_macs_per_cycle": 0.727273,
+        "seed_effective_ops_per_cycle": 1.454545,
+        "seed_peak_macs_per_cycle": 4,
+        "target_frequency_mhz": 1000.0,
+        "theoretical_peak_ops_per_cycle": 10240.0,
+        "theoretical_peak_tops": 10.24,
+        "total_cycles": 11
+      },
+      "trace": [
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 0,
+          "done": 0,
+          "event_tags": [
+            "dma_write_activations"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              1,
+              2
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 1,
+            "name": "DMA_ACT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 1,
+          "done": 0,
+          "event_tags": [
+            "dma_write_weights"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              5,
+              6
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 1,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 2,
+            "name": "DMA_WGT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 2,
+          "done": 0,
+          "event_tags": [
+            "dma_write_activations"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 1,
+            "dma_payload": [
+              3,
+              4
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 1,
+            "name": "DMA_ACT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 3,
+          "done": 0,
+          "event_tags": [
+            "dma_write_weights"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 1,
+            "dma_payload": [
+              7,
+              8
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 1,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 2,
+            "name": "DMA_WGT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 4,
+          "done": 0,
+          "event_tags": [
+            "load_vector"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 1,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 3,
+            "name": "LOAD"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 5,
+          "done": 0,
+          "event_tags": [
+            "load_vector"
+          ],
+          "memory_path": {
+            "activation_read_addr": 1,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 1,
+            "weight_read_addr": 1
+          },
+          "scheduler_state": {
+            "id": 3,
+            "name": "LOAD"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 1,
+            "psums": [
+              21,
+              8,
+              20,
+              12
+            ],
+            "valid_lane_count": 4,
+            "valids": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "cycle": 6,
+          "done": 0,
+          "event_tags": [
+            "compute",
+            "outputs_valid"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 4,
+            "name": "COMPUTE"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 1,
+            "psums": [
+              42,
+              16,
+              40,
+              24
+            ],
+            "valid_lane_count": 4,
+            "valids": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "cycle": 7,
+          "done": 0,
+          "event_tags": [
+            "compute",
+            "outputs_valid"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 4,
+            "name": "COMPUTE"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 1,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 8,
+          "done": 0,
+          "event_tags": [
+            "clear"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 5,
+            "name": "CLEAR"
+          }
+        },
+        {
+          "busy": 0,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 9,
+          "done": 1,
+          "event_tags": [],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 6,
+            "name": "DONE"
+          }
+        },
+        {
+          "busy": 0,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 10,
+          "done": 0,
+          "event_tags": [],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 0,
+            "name": "IDLE"
+          }
+        }
+      ]
+    },
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "single_slot_single_compute_top",
+      "program": {
+        "activation_slot0_i": [
+          1,
+          2
+        ],
+        "activation_slot1_i": [
+          3,
+          4
+        ],
+        "clear_on_done_i": 0,
+        "compute_iterations_i": 1,
+        "load_iterations_i": 2,
+        "slot_count_i": 1,
+        "weight_slot0_i": [
+          5,
+          6
+        ],
+        "weight_slot1_i": [
+          7,
+          8
+        ]
+      },
+      "rows": 2,
+      "summary": {
+        "busy_cycles": 5,
+        "compute_path": {
+          "clear_cycles": 0,
+          "compute_cycles": 1,
+          "estimated_mac_operations": 4,
+          "output_valid_cycles": 1,
+          "peak_abs_psum": 6,
+          "peak_valid_lanes": 4
+        },
+        "done_cycles": 1,
+        "idle_cycles": 1,
+        "memory_path": {
+          "activation_elements_transferred": 2,
+          "dma_activation_cycles": 1,
+          "dma_cycles": 2,
+          "dma_weight_cycles": 1,
+          "load_cycles": 2,
+          "weight_elements_transferred": 2
+        },
+        "scheduler_state_histogram": {
+          "COMPUTE": 1,
+          "DMA_ACT": 1,
+          "DMA_WGT": 1,
+          "DONE": 1,
+          "IDLE": 1,
+          "LOAD": 2
+        },
+        "scheduler_state_sequence": [
+          "DMA_ACT",
+          "DMA_WGT",
+          "LOAD",
+          "LOAD",
+          "COMPUTE",
+          "DONE",
+          "IDLE"
+        ],
+        "top_level_case_count": 1,
+        "total_cycles": 7
+      },
+      "top_npu_throughput": {
+        "architecture_pe_count": 5120,
+        "available": true,
+        "compute_cycles": 1,
+        "compute_duty_cycle": 0.142857,
+        "compute_duty_cycle_while_busy": 0.2,
+        "estimated_effective_ops_per_cycle": 1462.857143,
+        "estimated_effective_tops": 1.462857,
+        "estimation_model": "peak_scaled_by_compute_duty_cycle",
+        "scheduler_overhead_cycles": 6,
+        "seed_compute_array_utilization": 0.142857,
+        "seed_effective_macs_per_cycle": 0.571429,
+        "seed_effective_ops_per_cycle": 1.142857,
+        "seed_peak_macs_per_cycle": 4,
+        "target_frequency_mhz": 1000.0,
+        "theoretical_peak_ops_per_cycle": 10240.0,
+        "theoretical_peak_tops": 10.24,
+        "total_cycles": 7
+      },
+      "trace": [
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 0,
+          "done": 0,
+          "event_tags": [
+            "dma_write_activations"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              1,
+              2
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 1,
+            "name": "DMA_ACT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 1,
+          "done": 0,
+          "event_tags": [
+            "dma_write_weights"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              5,
+              6
+            ],
+            "dma_valid": 1,
+            "dma_write_weights": 1,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 2,
+            "name": "DMA_WGT"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 2,
+          "done": 0,
+          "event_tags": [
+            "load_vector"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 1,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 3,
+            "name": "LOAD"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 3,
+          "done": 0,
+          "event_tags": [
+            "load_vector"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 1,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 3,
+            "name": "LOAD"
+          }
+        },
+        {
+          "busy": 1,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 1,
+            "psums": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "valid_lane_count": 4,
+            "valids": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "cycle": 4,
+          "done": 0,
+          "event_tags": [
+            "compute",
+            "outputs_valid"
+          ],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 4,
+            "name": "COMPUTE"
+          }
+        },
+        {
+          "busy": 0,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 5,
+          "done": 1,
+          "event_tags": [],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 6,
+            "name": "DONE"
+          }
+        },
+        {
+          "busy": 0,
+          "compute_path": {
+            "clear_acc": 0,
+            "compute_en": 0,
+            "psums": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "valid_lane_count": 0,
+            "valids": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "cycle": 6,
+          "done": 0,
+          "event_tags": [],
+          "memory_path": {
+            "activation_read_addr": 0,
+            "dma_addr": 0,
+            "dma_payload": [
+              0,
+              0
+            ],
+            "dma_valid": 0,
+            "dma_write_weights": 0,
+            "load_vector_en": 0,
+            "weight_read_addr": 0
+          },
+          "scheduler_state": {
+            "id": 0,
+            "name": "IDLE"
+          }
+        }
+      ]
+    }
+  ],
+  "generator_backend": "heuristic",
+  "primary_module": "top_npu",
+  "summary": {
+    "busy_cycles": 14,
+    "compute_path": {
+      "clear_cycles": 1,
+      "compute_cycles": 3,
+      "estimated_mac_operations": 12,
+      "output_valid_cycles": 3,
+      "peak_abs_psum": 42,
+      "peak_valid_lanes": 4
+    },
+    "done_cycles": 2,
+    "idle_cycles": 2,
+    "memory_path": {
+      "activation_elements_transferred": 6,
+      "dma_activation_cycles": 3,
+      "dma_cycles": 6,
+      "dma_weight_cycles": 3,
+      "load_cycles": 4,
+      "weight_elements_transferred": 6
+    },
+    "scheduler_state_histogram": {
+      "CLEAR": 1,
+      "COMPUTE": 3,
+      "DMA_ACT": 3,
+      "DMA_WGT": 3,
+      "DONE": 2,
+      "IDLE": 2,
+      "LOAD": 4
+    },
+    "scheduler_state_sequence": [
+      "DMA_ACT",
+      "DMA_WGT",
+      "DMA_ACT",
+      "DMA_WGT",
+      "LOAD",
+      "LOAD",
+      "COMPUTE",
+      "COMPUTE",
+      "CLEAR",
+      "DONE",
+      "IDLE",
+      "DMA_ACT",
+      "DMA_WGT",
+      "LOAD",
+      "LOAD",
+      "COMPUTE",
+      "DONE",
+      "IDLE"
+    ],
+    "top_level_case_count": 2,
+    "top_npu_throughput": {
+      "architecture_pe_count": 5120,
+      "available": true,
+      "compute_cycles": 3,
+      "compute_duty_cycle": 0.166667,
+      "compute_duty_cycle_while_busy": 0.214286,
+      "estimated_effective_ops_per_cycle": 1706.666667,
+      "estimated_effective_tops": 1.706667,
+      "estimation_model": "peak_scaled_by_compute_duty_cycle",
+      "scheduler_overhead_cycles": 15,
+      "seed_effective_macs_per_cycle": 0.666667,
+      "seed_effective_ops_per_cycle": 1.333333,
+      "target_frequency_mhz": 1000.0,
+      "theoretical_peak_ops_per_cycle": 10240.0,
+      "theoretical_peak_tops": 10.24,
+      "total_cycles": 18
+    },
+    "total_cycles": 18
+  }
+}

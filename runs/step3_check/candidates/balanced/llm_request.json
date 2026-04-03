@@ -1,0 +1,79 @@
+{
+  "architecture": {
+    "bus_width_bits": 512,
+    "candidate_id": "balanced",
+    "estimated_area_mm2": 1.1,
+    "estimated_power_watts": 20.0,
+    "estimated_tops": 10.24,
+    "family": "tiled_systolic_array",
+    "global_buffer_mb": 5,
+    "local_sram_kb_per_tile": 256,
+    "modules": [
+      "mac_unit",
+      "processing_element",
+      "systolic_tile",
+      "scratchpad_controller",
+      "dma_engine",
+      "scheduler",
+      "top_npu"
+    ],
+    "pe_cols": 64,
+    "pe_count": 5120,
+    "pe_rows": 80,
+    "rationale": [
+      "Candidato valutato: balanced.",
+      "Famiglia architetturale scelta: tiled_systolic_array.",
+      "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 5000 unita'.",
+      "Dimensionamento iniziale in mesh 80x64 con tile 16x16.",
+      "Stimato throughput teorico di 10.24 TOPS a 1000 MHz.",
+      "Potenza stimata iniziale: 20.0 W.",
+      "Area stimata iniziale: 1.1 mm2.",
+      "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+    ],
+    "target_frequency_mhz": 1000.0,
+    "tile_cols": 16,
+    "tile_count": 20,
+    "tile_rows": 16
+  },
+  "candidate_id": "balanced",
+  "model": "gpt-test",
+  "prompt": "Sei un generatore RTL per acceleratori NPU.\n\nRequirement utente:\nVoglio una NPU INT8 da 10 TOPS per dense GEMM.\n\nSpec strutturata:\n- precisione: INT8\n- throughput: 10.0 TOPS\n- workload: dense_gemm\n- batch: 1-1\n- interfacce: AXI4, DMA, scratchpad_sram\n\nArchitettura candidata:\n- candidate_id: balanced\n- family: tiled_systolic_array\n- pe mesh: 80x64\n- tile: 16x16\n- sram per tile: 256 KB\n- bus width: 512 bit\n- target frequency: 1000.0 MHz\n\nRichiesta:\n1. proponi varianti di `processing_element` e `systolic_tile`\n2. evidenzia rischi di verifica\n3. restituisci output strutturato e conciso\n",
+  "spec": {
+    "ambiguities": [
+      "Budget di potenza assente o non parsabile.",
+      "Nodo tecnologico assente.",
+      "Frequenza target assente."
+    ],
+    "area_budget_mm2": null,
+    "assumptions": [
+      "Batch non specificato: assumo batch 1.",
+      "Interfacce non dichiarate: assumo AXI4, DMA e scratchpad SRAM.",
+      "Nodo tecnologico non specificato: uso una baseline generica 5nm ASIC.",
+      "Frequenza target non specificata: assumo 1000 MHz per la stima iniziale."
+    ],
+    "batch_max": 1,
+    "batch_min": 1,
+    "interfaces": [
+      "AXI4",
+      "DMA",
+      "scratchpad_sram"
+    ],
+    "latency_budget_ms": null,
+    "numeric_precision": "INT8",
+    "original_text": "Voglio una NPU INT8 da 10 TOPS per dense GEMM.",
+    "power_budget_watts": null,
+    "target_frequency_mhz": null,
+    "target_technology": null,
+    "throughput_unit": "TOPS",
+    "throughput_value": 10.0,
+    "workload_type": "dense_gemm"
+  },
+  "status": {
+    "available": false,
+    "effective_backend": "heuristic",
+    "live_generation_enabled": false,
+    "model": "gpt-test",
+    "reason": "Package `openai` non installato; fallback a generatore euristico.",
+    "requested_backend": "llm"
+  }
+}

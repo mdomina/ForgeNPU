@@ -1,0 +1,101 @@
+[
+  {
+    "architecture": {
+      "bus_width_bits": 512,
+      "candidate_id": "balanced",
+      "estimated_area_mm2": 1.1,
+      "estimated_power_watts": 20.0,
+      "estimated_tops": 10.24,
+      "family": "tiled_systolic_array",
+      "global_buffer_mb": 5,
+      "local_sram_kb_per_tile": 256,
+      "modules": [
+        "mac_unit",
+        "processing_element",
+        "systolic_tile",
+        "scratchpad_controller",
+        "dma_engine",
+        "scheduler",
+        "top_npu"
+      ],
+      "pe_cols": 64,
+      "pe_count": 5120,
+      "pe_rows": 80,
+      "rationale": [
+        "Candidato valutato: balanced.",
+        "Famiglia architetturale scelta: tiled_systolic_array.",
+        "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 5000 unita'.",
+        "Dimensionamento iniziale in mesh 80x64 con tile 16x16.",
+        "Stimato throughput teorico di 10.24 TOPS a 1000 MHz.",
+        "Potenza stimata iniziale: 20.0 W.",
+        "Area stimata iniziale: 1.1 mm2.",
+        "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+      ],
+      "target_frequency_mhz": 1000.0,
+      "tile_cols": 16,
+      "tile_count": 20,
+      "tile_rows": 16
+    },
+    "candidate_id": "balanced",
+    "generated": {
+      "candidate_id": "balanced",
+      "generator_backend": "heuristic",
+      "notes": [
+        "Richiesta backend LLM registrata in `llm_request.json` per futura generazione guidata.",
+        "Package `openai` non installato; fallback a generatore euristico.",
+        "Il bundle seed include `mac_unit` e `processing_element` con casi di verifica Python."
+      ],
+      "primary_module": "processing_element",
+      "reference_cases_path": "runs/step3_check/candidates/balanced/verification_vectors.json",
+      "rtl_files": [
+        "runs/step3_check/candidates/balanced/rtl/mac_unit.sv",
+        "runs/step3_check/candidates/balanced/rtl/processing_element.sv"
+      ],
+      "supporting_files": [
+        "runs/step3_check/candidates/balanced/design_intent.md",
+        "runs/step3_check/candidates/balanced/verification_vectors.json",
+        "runs/step3_check/candidates/balanced/llm_request.json"
+      ],
+      "testbench_files": [
+        "runs/step3_check/candidates/balanced/tb/mac_unit_tb.sv",
+        "runs/step3_check/candidates/balanced/tb/processing_element_tb.sv"
+      ]
+    },
+    "output_dir": "runs/step3_check/candidates/balanced",
+    "score": 58.04,
+    "tool_results": [
+      {
+        "available": true,
+        "log_path": "runs/step3_check/candidates/balanced/logs/python_reference.log",
+        "name": "python_reference",
+        "passed": true,
+        "return_code": 0,
+        "summary": "Golden model Python valido su 5 casi."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "verilator_lint",
+        "passed": null,
+        "return_code": null,
+        "summary": "verilator non installato; lint saltato."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "iverilog_sim",
+        "passed": null,
+        "return_code": null,
+        "summary": "iverilog non installato; simulazione saltata."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "yosys_synth",
+        "passed": null,
+        "return_code": null,
+        "summary": "yosys non installato; sintesi saltata."
+      }
+    ]
+  }
+]

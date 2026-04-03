@@ -1,0 +1,119 @@
+{
+  "architecture": {
+    "bus_width_bits": 1024,
+    "estimated_tops": 51.2,
+    "family": "tiled_systolic_transformer",
+    "global_buffer_mb": 6,
+    "local_sram_kb_per_tile": 512,
+    "modules": [
+      "mac_unit",
+      "processing_element",
+      "systolic_tile",
+      "scratchpad_controller",
+      "dma_engine",
+      "scheduler",
+      "top_npu"
+    ],
+    "pe_cols": 160,
+    "pe_count": 25600,
+    "pe_rows": 160,
+    "rationale": [
+      "Famiglia architetturale scelta: tiled_systolic_transformer.",
+      "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 25000 unita'.",
+      "Dimensionamento iniziale in mesh 160x160 con tile 32x32.",
+      "Stimato throughput teorico di 51.20 TOPS a 1000 MHz.",
+      "Batch massimo 4: aumento buffer locale e ampiezza del fabric."
+    ],
+    "target_frequency_mhz": 1000.0,
+    "tile_cols": 32,
+    "tile_count": 25,
+    "tile_rows": 32
+  },
+  "candidate_results": [],
+  "generated": {
+    "candidate_id": "baseline",
+    "generator_backend": "heuristic",
+    "notes": [
+      "Il bundle seed include `mac_unit` e `processing_element` con casi di verifica Python."
+    ],
+    "primary_module": "processing_element",
+    "reference_cases_path": "runs/step1_check/verification_vectors.json",
+    "rtl_files": [
+      "runs/step1_check/rtl/mac_unit.sv",
+      "runs/step1_check/rtl/processing_element.sv"
+    ],
+    "supporting_files": [
+      "runs/step1_check/design_intent.md",
+      "runs/step1_check/verification_vectors.json"
+    ],
+    "testbench_files": [
+      "runs/step1_check/tb/mac_unit_tb.sv",
+      "runs/step1_check/tb/processing_element_tb.sv"
+    ]
+  },
+  "output_dir": "runs/step1_check",
+  "score": 54.0,
+  "spec": {
+    "ambiguities": [
+      "Budget di potenza assente o non parsabile.",
+      "Nodo tecnologico assente.",
+      "Frequenza target assente."
+    ],
+    "area_budget_mm2": null,
+    "assumptions": [
+      "Interfacce non dichiarate: assumo AXI4, DMA e scratchpad SRAM.",
+      "Nodo tecnologico non specificato: uso una baseline generica 5nm ASIC.",
+      "Frequenza target non specificata: assumo 1000 MHz per la stima iniziale."
+    ],
+    "batch_max": 4,
+    "batch_min": 1,
+    "interfaces": [
+      "AXI4",
+      "DMA",
+      "scratchpad_sram"
+    ],
+    "latency_budget_ms": null,
+    "numeric_precision": "INT8",
+    "original_text": "Voglio una NPU INT8 da 50 TOPS con supporto transformer e batch 1-4.",
+    "power_budget_watts": null,
+    "target_frequency_mhz": null,
+    "target_technology": null,
+    "throughput_unit": "TOPS",
+    "throughput_value": 50.0,
+    "workload_type": "transformer"
+  },
+  "tool_results": [
+    {
+      "available": true,
+      "log_path": "runs/step1_check/logs/python_reference.log",
+      "name": "python_reference",
+      "passed": true,
+      "return_code": 0,
+      "summary": "Golden model Python valido su 5 casi."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "verilator_lint",
+      "passed": null,
+      "return_code": null,
+      "summary": "verilator non installato; lint saltato."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "iverilog_sim",
+      "passed": null,
+      "return_code": null,
+      "summary": "iverilog non installato; simulazione saltata."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "yosys_synth",
+      "passed": null,
+      "return_code": null,
+      "summary": "yosys non installato; sintesi saltata."
+    }
+  ]
+}

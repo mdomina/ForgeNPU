@@ -1,0 +1,189 @@
+{
+  "mac_unit": [
+    {
+      "expected": {
+        "acc_out": 14
+      },
+      "inputs": {
+        "a": 4,
+        "acc_in": 2,
+        "b": 3
+      },
+      "name": "positive_accumulate"
+    },
+    {
+      "expected": {
+        "acc_out": -20
+      },
+      "inputs": {
+        "a": -5,
+        "acc_in": 10,
+        "b": 6
+      },
+      "name": "signed_accumulate"
+    }
+  ],
+  "processing_element": [
+    {
+      "expected": {
+        "psum_o": 17,
+        "valid_o": 1
+      },
+      "inputs": {
+        "activation_i": 3,
+        "clear_acc": 0,
+        "compute_en": 1,
+        "psum_i": 5,
+        "weight_i": 4
+      },
+      "name": "compute_enabled"
+    },
+    {
+      "expected": {
+        "psum_o": 11,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": -2,
+        "clear_acc": 0,
+        "compute_en": 0,
+        "psum_i": 11,
+        "weight_i": 5
+      },
+      "name": "bypass_psum"
+    },
+    {
+      "expected": {
+        "psum_o": 0,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": 7,
+        "clear_acc": 1,
+        "compute_en": 1,
+        "psum_i": 99,
+        "weight_i": 8
+      },
+      "name": "clear_overrides_compute"
+    }
+  ],
+  "systolic_tile": [
+    {
+      "expected": {
+        "psums_o": [
+          5,
+          13,
+          23,
+          35
+        ],
+        "valids_o": [
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "inputs": {
+        "activations_i": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "clear_acc": 0,
+        "compute_en": 1,
+        "psums_i": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "weights_i": [
+          5,
+          6,
+          7,
+          8
+        ]
+      },
+      "name": "two_by_two_compute"
+    },
+    {
+      "expected": {
+        "psums_o": [
+          10,
+          20,
+          30,
+          40
+        ],
+        "valids_o": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "inputs": {
+        "activations_i": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "clear_acc": 0,
+        "compute_en": 0,
+        "psums_i": [
+          10,
+          20,
+          30,
+          40
+        ],
+        "weights_i": [
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "name": "bypass_tile"
+    },
+    {
+      "expected": {
+        "psums_o": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "valids_o": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "inputs": {
+        "activations_i": [
+          9,
+          9,
+          9,
+          9
+        ],
+        "clear_acc": 1,
+        "compute_en": 1,
+        "psums_i": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "weights_i": [
+          2,
+          2,
+          2,
+          2
+        ]
+      },
+      "name": "clear_tile"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "llm": {
+    "available": false,
+    "effective_backend": "heuristic",
+    "live_generation_enabled": false,
+    "model": "gpt-test",
+    "reason": "Package `openai` non installato; fallback a generatore euristico.",
+    "requested_backend": "llm"
+  },
+  "toolchain": [
+    {
+      "available": false,
+      "install_hint": "brew install icarus-verilog",
+      "kind": "simulation",
+      "name": "iverilog",
+      "path": null
+    },
+    {
+      "available": false,
+      "install_hint": "brew install verilator",
+      "kind": "lint",
+      "name": "verilator",
+      "path": null
+    },
+    {
+      "available": false,
+      "install_hint": "brew install yosys",
+      "kind": "synthesis",
+      "name": "yosys",
+      "path": null
+    }
+  ]
+}

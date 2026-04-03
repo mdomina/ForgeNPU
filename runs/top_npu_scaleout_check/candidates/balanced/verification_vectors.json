@@ -1,0 +1,2847 @@
+{
+  "dma_engine": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "activation_then_weight_transfer",
+      "rows": 2,
+      "steps": [
+        {
+          "dma_addr_i": 1,
+          "dma_payload_i": [
+            3,
+            4
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "activation_write_addr_o": 1,
+            "activations_write_data_o": [
+              3,
+              4
+            ],
+            "dma_done_o": 1,
+            "weight_write_addr_o": 1,
+            "weights_write_data_o": [
+              3,
+              4
+            ],
+            "write_activations_en_o": 1,
+            "write_weights_en_o": 0
+          }
+        },
+        {
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "activation_write_addr_o": 1,
+            "activations_write_data_o": [
+              3,
+              4
+            ],
+            "dma_done_o": 0,
+            "weight_write_addr_o": 1,
+            "weights_write_data_o": [
+              3,
+              4
+            ],
+            "write_activations_en_o": 0,
+            "write_weights_en_o": 0
+          }
+        },
+        {
+          "dma_addr_i": 2,
+          "dma_payload_i": [
+            7,
+            8
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 1,
+          "expected": {
+            "activation_write_addr_o": 2,
+            "activations_write_data_o": [
+              7,
+              8
+            ],
+            "dma_done_o": 1,
+            "weight_write_addr_o": 2,
+            "weights_write_data_o": [
+              7,
+              8
+            ],
+            "write_activations_en_o": 0,
+            "write_weights_en_o": 1
+          }
+        },
+        {
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "activation_write_addr_o": 2,
+            "activations_write_data_o": [
+              7,
+              8
+            ],
+            "dma_done_o": 0,
+            "weight_write_addr_o": 2,
+            "weights_write_data_o": [
+              7,
+              8
+            ],
+            "write_activations_en_o": 0,
+            "write_weights_en_o": 0
+          }
+        }
+      ]
+    }
+  ],
+  "mac_unit": [
+    {
+      "expected": {
+        "acc_out": 14
+      },
+      "inputs": {
+        "a": 4,
+        "acc_in": 2,
+        "b": 3
+      },
+      "name": "positive_accumulate"
+    },
+    {
+      "expected": {
+        "acc_out": -20
+      },
+      "inputs": {
+        "a": -5,
+        "acc_in": 10,
+        "b": 6
+      },
+      "name": "signed_accumulate"
+    }
+  ],
+  "processing_element": [
+    {
+      "expected": {
+        "psum_o": 17,
+        "valid_o": 1
+      },
+      "inputs": {
+        "activation_i": 3,
+        "clear_acc": 0,
+        "compute_en": 1,
+        "psum_i": 5,
+        "weight_i": 4
+      },
+      "name": "compute_enabled"
+    },
+    {
+      "expected": {
+        "psum_o": 11,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": -2,
+        "clear_acc": 0,
+        "compute_en": 0,
+        "psum_i": 11,
+        "weight_i": 5
+      },
+      "name": "bypass_psum"
+    },
+    {
+      "expected": {
+        "psum_o": 0,
+        "valid_o": 0
+      },
+      "inputs": {
+        "activation_i": 7,
+        "clear_acc": 1,
+        "compute_en": 1,
+        "psum_i": 99,
+        "weight_i": 8
+      },
+      "name": "clear_overrides_compute"
+    }
+  ],
+  "scheduler": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "configurable_two_slot_sequence",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              1,
+              2
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 1,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 1,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              5,
+              6
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 1,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 2,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 1,
+            "dma_payload_o": [
+              3,
+              4
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 1,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 1,
+            "dma_payload_o": [
+              7,
+              8
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 1,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 2,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 1,
+            "state_o": 3,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 1,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 1,
+            "state_o": 3,
+            "weight_read_addr_o": 1
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 1,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 4,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 1,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 4,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 1,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 5,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 0,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 1,
+            "load_vector_en_o": 0,
+            "state_o": 6,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 0,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 0,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        }
+      ]
+    },
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "single_slot_single_compute_no_clear",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              1,
+              2
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 1,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 1,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              5,
+              6
+            ],
+            "dma_valid_o": 1,
+            "dma_write_weights_o": 1,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 2,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 1,
+            "state_o": 3,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 1,
+            "state_o": 3,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 1,
+            "clear_acc_o": 0,
+            "compute_en_o": 1,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 4,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 0,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 1,
+            "load_vector_en_o": 0,
+            "state_o": 6,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "activation_read_addr_o": 0,
+            "busy_o": 0,
+            "clear_acc_o": 0,
+            "compute_en_o": 0,
+            "dma_addr_o": 0,
+            "dma_payload_o": [
+              0,
+              0
+            ],
+            "dma_valid_o": 0,
+            "dma_write_weights_o": 0,
+            "done_o": 0,
+            "load_vector_en_o": 0,
+            "state_o": 0,
+            "weight_read_addr_o": 0
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        }
+      ]
+    }
+  ],
+  "scratchpad_controller": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "bank_write_and_read",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_read_addr_i": 0,
+          "activation_write_addr_i": 0,
+          "activations_write_data_i": [
+            1,
+            2
+          ],
+          "expected": {
+            "activations_west_o": [
+              0,
+              0
+            ],
+            "vector_valid_o": 0,
+            "weights_north_o": [
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0,
+          "weight_write_addr_i": 0,
+          "weights_write_data_i": [
+            0,
+            0
+          ],
+          "write_activations_en_i": 1,
+          "write_weights_en_i": 0
+        },
+        {
+          "activation_read_addr_i": 0,
+          "activation_write_addr_i": 0,
+          "activations_write_data_i": [
+            0,
+            0
+          ],
+          "expected": {
+            "activations_west_o": [
+              1,
+              2
+            ],
+            "vector_valid_o": 0,
+            "weights_north_o": [
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0,
+          "weight_write_addr_i": 0,
+          "weights_write_data_i": [
+            5,
+            6
+          ],
+          "write_activations_en_i": 0,
+          "write_weights_en_i": 1
+        },
+        {
+          "activation_read_addr_i": 0,
+          "activation_write_addr_i": 1,
+          "activations_write_data_i": [
+            3,
+            4
+          ],
+          "expected": {
+            "activations_west_o": [
+              1,
+              2
+            ],
+            "vector_valid_o": 0,
+            "weights_north_o": [
+              5,
+              6
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0,
+          "weight_write_addr_i": 1,
+          "weights_write_data_i": [
+            7,
+            8
+          ],
+          "write_activations_en_i": 1,
+          "write_weights_en_i": 1
+        },
+        {
+          "activation_read_addr_i": 1,
+          "activation_write_addr_i": 0,
+          "activations_write_data_i": [
+            0,
+            0
+          ],
+          "expected": {
+            "activations_west_o": [
+              3,
+              4
+            ],
+            "vector_valid_o": 1,
+            "weights_north_o": [
+              7,
+              8
+            ]
+          },
+          "load_vector_en_i": 1,
+          "weight_read_addr_i": 1,
+          "weight_write_addr_i": 0,
+          "weights_write_data_i": [
+            0,
+            0
+          ],
+          "write_activations_en_i": 0,
+          "write_weights_en_i": 0
+        }
+      ]
+    }
+  ],
+  "systolic_tile": [
+    {
+      "cols": 2,
+      "name": "two_wave_accumulate",
+      "rows": 2,
+      "steps": [
+        {
+          "activations_west_i": [
+            1,
+            2
+          ],
+          "clear_acc": 0,
+          "compute_en": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_inputs_en": 1,
+          "weights_north_i": [
+            5,
+            6
+          ]
+        },
+        {
+          "activations_west_i": [
+            3,
+            4
+          ],
+          "clear_acc": 0,
+          "compute_en": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_inputs_en": 1,
+          "weights_north_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activations_west_i": [
+            0,
+            0
+          ],
+          "clear_acc": 0,
+          "compute_en": 1,
+          "expected": {
+            "psums_o": [
+              21,
+              8,
+              20,
+              12
+            ],
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_inputs_en": 0,
+          "weights_north_i": [
+            0,
+            0
+          ]
+        },
+        {
+          "activations_west_i": [
+            0,
+            0
+          ],
+          "clear_acc": 0,
+          "compute_en": 1,
+          "expected": {
+            "psums_o": [
+              42,
+              16,
+              40,
+              24
+            ],
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_inputs_en": 0,
+          "weights_north_i": [
+            0,
+            0
+          ]
+        },
+        {
+          "activations_west_i": [
+            0,
+            0
+          ],
+          "clear_acc": 1,
+          "compute_en": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_inputs_en": 0,
+          "weights_north_i": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "cols": 2,
+      "name": "single_wave_hold",
+      "rows": 2,
+      "steps": [
+        {
+          "activations_west_i": [
+            9,
+            10
+          ],
+          "clear_acc": 0,
+          "compute_en": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_inputs_en": 1,
+          "weights_north_i": [
+            1,
+            2
+          ]
+        },
+        {
+          "activations_west_i": [
+            0,
+            0
+          ],
+          "clear_acc": 0,
+          "compute_en": 1,
+          "expected": {
+            "psums_o": [
+              9,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_inputs_en": 0,
+          "weights_north_i": [
+            0,
+            0
+          ]
+        },
+        {
+          "activations_west_i": [
+            0,
+            0
+          ],
+          "clear_acc": 0,
+          "compute_en": 0,
+          "expected": {
+            "psums_o": [
+              9,
+              0,
+              0,
+              0
+            ],
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_inputs_en": 0,
+          "weights_north_i": [
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "tile_compute_unit": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "dma_feeds_scratchpad_then_compute",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_read_addr_i": 0,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            1,
+            2
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 0,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 0,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            5,
+            6
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 1,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 0,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 0,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 1,
+          "dma_payload_i": [
+            3,
+            4
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 1,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 1,
+          "dma_payload_i": [
+            7,
+            8
+          ],
+          "dma_valid_i": 1,
+          "dma_write_weights_i": 1,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 0
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 1
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 1,
+          "weight_read_addr_i": 1
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 1,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              21,
+              8,
+              20,
+              12
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 1
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 0,
+          "compute_en_i": 1,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              42,
+              16,
+              40,
+              24
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 1
+        },
+        {
+          "activation_read_addr_i": 1,
+          "clear_acc_i": 1,
+          "compute_en_i": 0,
+          "dma_addr_i": 0,
+          "dma_payload_i": [
+            0,
+            0
+          ],
+          "dma_valid_i": 0,
+          "dma_write_weights_i": 0,
+          "expected": {
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scratchpad_vector_valid_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_vector_en_i": 0,
+          "weight_read_addr_i": 1
+        }
+      ]
+    }
+  ],
+  "top_npu": [
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "configurable_two_slot_program",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 1,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 2,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 2,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              21,
+              8,
+              20,
+              12
+            ],
+            "scheduler_state_o": 4,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              42,
+              16,
+              40,
+              24
+            ],
+            "scheduler_state_o": 4,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 5,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 1,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 6,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 1,
+          "compute_iterations_i": 2,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 2,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        }
+      ],
+      "tile_count": 1
+    },
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "single_slot_single_compute_top",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 1,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 2,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 4,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 1,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 6,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 0,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        }
+      ],
+      "tile_count": 1
+    },
+    {
+      "cols": 2,
+      "depth": 4,
+      "name": "dual_tile_broadcast_compute_top",
+      "rows": 2,
+      "steps": [
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 1,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 1,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 2,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "scheduler_state_o": 3,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 1,
+            "done_o": 0,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0,
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 4,
+            "valids_o": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 1,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0,
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 6,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        },
+        {
+          "activation_slot0_i": [
+            1,
+            2
+          ],
+          "activation_slot1_i": [
+            3,
+            4
+          ],
+          "clear_on_done_i": 0,
+          "compute_iterations_i": 1,
+          "expected": {
+            "busy_o": 0,
+            "done_o": 0,
+            "psums_o": [
+              5,
+              6,
+              0,
+              0,
+              5,
+              6,
+              0,
+              0
+            ],
+            "scheduler_state_o": 0,
+            "valids_o": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "load_iterations_i": 2,
+          "slot_count_i": 1,
+          "start_i": 0,
+          "tile_enable_i": [
+            1,
+            1
+          ],
+          "weight_slot0_i": [
+            5,
+            6
+          ],
+          "weight_slot1_i": [
+            7,
+            8
+          ]
+        }
+      ],
+      "tile_count": 2
+    }
+  ]
+}

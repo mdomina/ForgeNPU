@@ -1,0 +1,298 @@
+[
+  {
+    "architecture": {
+      "bus_width_bits": 2048,
+      "candidate_id": "balanced",
+      "estimated_area_mm2": 89.37,
+      "estimated_power_watts": 376.45,
+      "estimated_tops": 1081.344,
+      "family": "tiled_systolic_transformer",
+      "global_buffer_mb": 33,
+      "local_sram_kb_per_tile": 768,
+      "modules": [
+        "mac_unit",
+        "processing_element",
+        "systolic_tile",
+        "scratchpad_controller",
+        "dma_engine",
+        "scheduler",
+        "top_npu"
+      ],
+      "pe_cols": 704,
+      "pe_count": 540672,
+      "pe_rows": 768,
+      "rationale": [
+        "Candidato valutato: balanced.",
+        "Famiglia architetturale scelta: tiled_systolic_transformer.",
+        "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 500000 unita'.",
+        "Dimensionamento iniziale in mesh 768x704 con tile 64x64.",
+        "Stimato throughput teorico di 1081.34 TOPS a 1000 MHz.",
+        "Potenza stimata iniziale: 376.4 W.",
+        "Area stimata iniziale: 89.4 mm2.",
+        "Batch massimo 16: aumento buffer locale e ampiezza del fabric.",
+        "Budget di potenza rilevato: 250 W.",
+        "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+      ],
+      "target_frequency_mhz": 1000.0,
+      "tile_cols": 64,
+      "tile_count": 132,
+      "tile_rows": 64
+    },
+    "candidate_id": "balanced",
+    "generated": {
+      "candidate_id": "balanced",
+      "generator_backend": "heuristic",
+      "notes": [
+        "Il bundle seed include `mac_unit` e `processing_element` con casi di verifica Python."
+      ],
+      "primary_module": "processing_element",
+      "reference_cases_path": "runs/step2_check/candidates/balanced/verification_vectors.json",
+      "rtl_files": [
+        "runs/step2_check/candidates/balanced/rtl/mac_unit.sv",
+        "runs/step2_check/candidates/balanced/rtl/processing_element.sv"
+      ],
+      "supporting_files": [
+        "runs/step2_check/candidates/balanced/design_intent.md",
+        "runs/step2_check/candidates/balanced/verification_vectors.json"
+      ],
+      "testbench_files": [
+        "runs/step2_check/candidates/balanced/tb/mac_unit_tb.sv",
+        "runs/step2_check/candidates/balanced/tb/processing_element_tb.sv"
+      ]
+    },
+    "output_dir": "runs/step2_check/candidates/balanced",
+    "score": 50.1,
+    "tool_results": [
+      {
+        "available": true,
+        "log_path": "runs/step2_check/candidates/balanced/logs/python_reference.log",
+        "name": "python_reference",
+        "passed": true,
+        "return_code": 0,
+        "summary": "Golden model Python valido su 5 casi."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "verilator_lint",
+        "passed": null,
+        "return_code": null,
+        "summary": "verilator non installato; lint saltato."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "iverilog_sim",
+        "passed": null,
+        "return_code": null,
+        "summary": "iverilog non installato; simulazione saltata."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "yosys_synth",
+        "passed": null,
+        "return_code": null,
+        "summary": "yosys non installato; sintesi saltata."
+      }
+    ]
+  },
+  {
+    "architecture": {
+      "bus_width_bits": 2560,
+      "candidate_id": "throughput_max",
+      "estimated_area_mm2": 84.37,
+      "estimated_power_watts": 431.21,
+      "estimated_tops": 1036.288,
+      "family": "tiled_systolic_transformer",
+      "global_buffer_mb": 27,
+      "local_sram_kb_per_tile": 896,
+      "modules": [
+        "mac_unit",
+        "processing_element",
+        "systolic_tile",
+        "scratchpad_controller",
+        "dma_engine",
+        "scheduler",
+        "top_npu",
+        "prefetch_buffer"
+      ],
+      "pe_cols": 640,
+      "pe_count": 450560,
+      "pe_rows": 704,
+      "rationale": [
+        "Candidato valutato: throughput_max.",
+        "Famiglia architetturale scelta: tiled_systolic_transformer.",
+        "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 434783 unita'.",
+        "Dimensionamento iniziale in mesh 704x640 con tile 64x64.",
+        "Stimato throughput teorico di 1036.29 TOPS a 1150 MHz.",
+        "Potenza stimata iniziale: 431.2 W.",
+        "Area stimata iniziale: 84.4 mm2.",
+        "Batch massimo 16: aumento buffer locale e ampiezza del fabric.",
+        "Budget di potenza rilevato: 250 W.",
+        "Profilo throughput_max: privilegio frequenza e banda rispetto al costo energetico."
+      ],
+      "target_frequency_mhz": 1150.0,
+      "tile_cols": 64,
+      "tile_count": 110,
+      "tile_rows": 64
+    },
+    "candidate_id": "throughput_max",
+    "generated": {
+      "candidate_id": "throughput_max",
+      "generator_backend": "heuristic",
+      "notes": [
+        "Il bundle seed include `mac_unit` e `processing_element` con casi di verifica Python."
+      ],
+      "primary_module": "processing_element",
+      "reference_cases_path": "runs/step2_check/candidates/throughput_max/verification_vectors.json",
+      "rtl_files": [
+        "runs/step2_check/candidates/throughput_max/rtl/mac_unit.sv",
+        "runs/step2_check/candidates/throughput_max/rtl/processing_element.sv"
+      ],
+      "supporting_files": [
+        "runs/step2_check/candidates/throughput_max/design_intent.md",
+        "runs/step2_check/candidates/throughput_max/verification_vectors.json"
+      ],
+      "testbench_files": [
+        "runs/step2_check/candidates/throughput_max/tb/mac_unit_tb.sv",
+        "runs/step2_check/candidates/throughput_max/tb/processing_element_tb.sv"
+      ]
+    },
+    "output_dir": "runs/step2_check/candidates/throughput_max",
+    "score": 46.43,
+    "tool_results": [
+      {
+        "available": true,
+        "log_path": "runs/step2_check/candidates/throughput_max/logs/python_reference.log",
+        "name": "python_reference",
+        "passed": true,
+        "return_code": 0,
+        "summary": "Golden model Python valido su 5 casi."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "verilator_lint",
+        "passed": null,
+        "return_code": null,
+        "summary": "verilator non installato; lint saltato."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "iverilog_sim",
+        "passed": null,
+        "return_code": null,
+        "summary": "iverilog non installato; simulazione saltata."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "yosys_synth",
+        "passed": null,
+        "return_code": null,
+        "summary": "yosys non installato; sintesi saltata."
+      }
+    ]
+  },
+  {
+    "architecture": {
+      "bus_width_bits": 1792,
+      "candidate_id": "efficiency",
+      "estimated_area_mm2": 91.19,
+      "estimated_power_watts": 280.82,
+      "estimated_tops": 1038.09024,
+      "family": "tiled_systolic_transformer",
+      "global_buffer_mb": 36,
+      "local_sram_kb_per_tile": 832,
+      "modules": [
+        "mac_unit",
+        "processing_element",
+        "systolic_tile",
+        "scratchpad_controller",
+        "dma_engine",
+        "scheduler",
+        "top_npu",
+        "clock_gating_unit"
+      ],
+      "pe_cols": 768,
+      "pe_count": 589824,
+      "pe_rows": 768,
+      "rationale": [
+        "Candidato valutato: efficiency.",
+        "Famiglia architetturale scelta: tiled_systolic_transformer.",
+        "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 568182 unita'.",
+        "Dimensionamento iniziale in mesh 768x768 con tile 64x64.",
+        "Stimato throughput teorico di 1038.09 TOPS a 880 MHz.",
+        "Potenza stimata iniziale: 280.8 W.",
+        "Area stimata iniziale: 91.2 mm2.",
+        "Batch massimo 16: aumento buffer locale e ampiezza del fabric.",
+        "Budget di potenza rilevato: 250 W.",
+        "Profilo efficiency: riduco frequenza e banda per rientrare piu' facilmente nel budget di potenza."
+      ],
+      "target_frequency_mhz": 880.0,
+      "tile_cols": 64,
+      "tile_count": 144,
+      "tile_rows": 64
+    },
+    "candidate_id": "efficiency",
+    "generated": {
+      "candidate_id": "efficiency",
+      "generator_backend": "heuristic",
+      "notes": [
+        "Il bundle seed include `mac_unit` e `processing_element` con casi di verifica Python."
+      ],
+      "primary_module": "processing_element",
+      "reference_cases_path": "runs/step2_check/candidates/efficiency/verification_vectors.json",
+      "rtl_files": [
+        "runs/step2_check/candidates/efficiency/rtl/mac_unit.sv",
+        "runs/step2_check/candidates/efficiency/rtl/processing_element.sv"
+      ],
+      "supporting_files": [
+        "runs/step2_check/candidates/efficiency/design_intent.md",
+        "runs/step2_check/candidates/efficiency/verification_vectors.json"
+      ],
+      "testbench_files": [
+        "runs/step2_check/candidates/efficiency/tb/mac_unit_tb.sv",
+        "runs/step2_check/candidates/efficiency/tb/processing_element_tb.sv"
+      ]
+    },
+    "output_dir": "runs/step2_check/candidates/efficiency",
+    "score": 61.39,
+    "tool_results": [
+      {
+        "available": true,
+        "log_path": "runs/step2_check/candidates/efficiency/logs/python_reference.log",
+        "name": "python_reference",
+        "passed": true,
+        "return_code": 0,
+        "summary": "Golden model Python valido su 5 casi."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "verilator_lint",
+        "passed": null,
+        "return_code": null,
+        "summary": "verilator non installato; lint saltato."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "iverilog_sim",
+        "passed": null,
+        "return_code": null,
+        "summary": "iverilog non installato; simulazione saltata."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "yosys_synth",
+        "passed": null,
+        "return_code": null,
+        "summary": "yosys non installato; sintesi saltata."
+      }
+    ]
+  }
+]

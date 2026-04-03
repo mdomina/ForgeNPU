@@ -1,0 +1,194 @@
+[
+  {
+    "architecture": {
+      "bus_width_bits": 512,
+      "candidate_id": "balanced",
+      "estimated_area_mm2": 1.1,
+      "estimated_power_watts": 20.0,
+      "estimated_tops": 10.24,
+      "family": "tiled_systolic_array",
+      "global_buffer_mb": 5,
+      "local_sram_kb_per_tile": 256,
+      "modules": [
+        "mac_unit",
+        "processing_element",
+        "systolic_tile",
+        "scratchpad_controller",
+        "tile_compute_unit",
+        "dma_engine",
+        "scheduler",
+        "top_npu"
+      ],
+      "pe_cols": 64,
+      "pe_count": 5120,
+      "pe_rows": 80,
+      "rationale": [
+        "Candidato valutato: balanced.",
+        "Famiglia architetturale scelta: tiled_systolic_array.",
+        "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 5000 unita'.",
+        "Dimensionamento iniziale in mesh 80x64 con tile 16x16.",
+        "Stimato throughput teorico di 10.24 TOPS a 1000 MHz.",
+        "Potenza stimata iniziale: 20.0 W.",
+        "Area stimata iniziale: 1.1 mm2.",
+        "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+      ],
+      "target_frequency_mhz": 1000.0,
+      "tile_cols": 16,
+      "tile_count": 20,
+      "tile_rows": 16
+    },
+    "candidate_id": "balanced",
+    "generated": {
+      "candidate_id": "balanced",
+      "generator_backend": "heuristic",
+      "notes": [
+        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
+      ],
+      "primary_module": "top_npu",
+      "reference_cases_path": "runs/top_npu_scaleout_check/candidates/balanced/verification_vectors.json",
+      "rtl_files": [
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/mac_unit.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/processing_element.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/systolic_tile.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/dma_engine.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/scratchpad_controller.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/tile_compute_unit.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/scheduler.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/rtl/top_npu.sv"
+      ],
+      "supporting_files": [
+        "runs/top_npu_scaleout_check/candidates/balanced/design_intent.md",
+        "runs/top_npu_scaleout_check/candidates/balanced/verification_vectors.json",
+        "runs/top_npu_scaleout_check/candidates/balanced/execution_report.json"
+      ],
+      "testbench_files": [
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/mac_unit_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/processing_element_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/systolic_tile_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/dma_engine_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/scratchpad_controller_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/tile_compute_unit_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/scheduler_tb.sv",
+        "runs/top_npu_scaleout_check/candidates/balanced/tb/top_npu_tb.sv"
+      ]
+    },
+    "output_dir": "runs/top_npu_scaleout_check/candidates/balanced",
+    "report": {
+      "available": true,
+      "path": "runs/top_npu_scaleout_check/candidates/balanced/execution_report.json",
+      "summary": {
+        "busy_cycles": 19,
+        "compute_path": {
+          "clear_cycles": 1,
+          "compute_cycles": 4,
+          "estimated_mac_operations": 20,
+          "output_valid_cycles": 4,
+          "peak_abs_psum": 42,
+          "peak_valid_lanes": 8
+        },
+        "done_cycles": 3,
+        "idle_cycles": 3,
+        "memory_path": {
+          "activation_elements_transferred": 8,
+          "dma_activation_cycles": 4,
+          "dma_cycles": 8,
+          "dma_weight_cycles": 4,
+          "load_cycles": 6,
+          "weight_elements_transferred": 8
+        },
+        "scheduler_state_histogram": {
+          "CLEAR": 1,
+          "COMPUTE": 4,
+          "DMA_ACT": 4,
+          "DMA_WGT": 4,
+          "DONE": 3,
+          "IDLE": 3,
+          "LOAD": 6
+        },
+        "scheduler_state_sequence": [
+          "DMA_ACT",
+          "DMA_WGT",
+          "DMA_ACT",
+          "DMA_WGT",
+          "LOAD",
+          "LOAD",
+          "COMPUTE",
+          "COMPUTE",
+          "CLEAR",
+          "DONE",
+          "IDLE",
+          "DMA_ACT",
+          "DMA_WGT",
+          "LOAD",
+          "LOAD",
+          "COMPUTE",
+          "DONE",
+          "IDLE",
+          "DMA_ACT",
+          "DMA_WGT",
+          "LOAD",
+          "LOAD",
+          "COMPUTE",
+          "DONE",
+          "IDLE"
+        ],
+        "top_level_case_count": 3,
+        "top_npu_throughput": {
+          "architecture_pe_count": 5120,
+          "available": true,
+          "compute_cycles": 4,
+          "compute_duty_cycle": 0.16,
+          "compute_duty_cycle_while_busy": 0.210526,
+          "estimated_effective_ops_per_cycle": 1638.4,
+          "estimated_effective_tops": 1.6384,
+          "estimation_model": "peak_scaled_by_compute_duty_cycle",
+          "scheduler_overhead_cycles": 21,
+          "seed_compute_array_utilization": 0.1,
+          "seed_effective_macs_per_cycle": 0.8,
+          "seed_effective_ops_per_cycle": 1.6,
+          "seed_peak_macs_per_cycle": 8,
+          "target_frequency_mhz": 1000.0,
+          "theoretical_peak_ops_per_cycle": 10240.0,
+          "theoretical_peak_tops": 10.24,
+          "total_cycles": 25
+        },
+        "total_cycles": 25
+      }
+    },
+    "score": 58.04,
+    "tool_results": [
+      {
+        "available": true,
+        "log_path": "runs/top_npu_scaleout_check/candidates/balanced/logs/python_reference.log",
+        "name": "python_reference",
+        "passed": true,
+        "return_code": 0,
+        "summary": "Golden model Python valido su 76 casi."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "verilator_lint",
+        "passed": null,
+        "return_code": null,
+        "summary": "verilator non installato; lint saltato."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "iverilog_sim",
+        "passed": null,
+        "return_code": null,
+        "summary": "iverilog non installato; simulazione saltata."
+      },
+      {
+        "available": false,
+        "log_path": null,
+        "name": "yosys_synth",
+        "passed": null,
+        "return_code": null,
+        "summary": "yosys non installato; sintesi saltata."
+      }
+    ]
+  }
+]

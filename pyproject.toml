@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "create-npu"
+version = "0.1.0"
+description = "Bootstrap MVP for natural-language-to-NPU design exploration."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Codex" }]
+
+[project.scripts]
+create-npu = "create_npu.cli:main"
+
+[tool.setuptools]
+packages = ["create_npu"]
+

@@ -1,0 +1,505 @@
+{
+  "architecture": {
+    "bus_width_bits": 1024,
+    "candidate_id": "balanced",
+    "estimated_area_mm2": 4.72,
+    "estimated_power_watts": 25.07,
+    "estimated_tops": 51.2,
+    "family": "tiled_systolic_transformer",
+    "global_buffer_mb": 6,
+    "local_sram_kb_per_tile": 512,
+    "modules": [
+      "mac_unit",
+      "processing_element",
+      "systolic_tile",
+      "scratchpad_controller",
+      "tile_compute_unit",
+      "dma_engine",
+      "scheduler",
+      "top_npu"
+    ],
+    "pe_cols": 160,
+    "pe_count": 25600,
+    "pe_rows": 160,
+    "rationale": [
+      "Candidato valutato: balanced.",
+      "Famiglia architetturale scelta: tiled_systolic_transformer.",
+      "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 25000 unita'.",
+      "Dimensionamento iniziale in mesh 160x160 con tile 32x32.",
+      "Stimato throughput teorico di 51.20 TOPS a 1000 MHz.",
+      "Potenza stimata iniziale: 25.1 W.",
+      "Area stimata iniziale: 4.7 mm2.",
+      "Batch massimo 4: aumento buffer locale e ampiezza del fabric.",
+      "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+    ],
+    "target_frequency_mhz": 1000.0,
+    "tile_cols": 32,
+    "tile_count": 25,
+    "tile_rows": 32
+  },
+  "candidate_results": [
+    {
+      "architecture": {
+        "bus_width_bits": 1024,
+        "candidate_id": "balanced",
+        "estimated_area_mm2": 4.72,
+        "estimated_power_watts": 25.07,
+        "estimated_tops": 51.2,
+        "family": "tiled_systolic_transformer",
+        "global_buffer_mb": 6,
+        "local_sram_kb_per_tile": 512,
+        "modules": [
+          "mac_unit",
+          "processing_element",
+          "systolic_tile",
+          "scratchpad_controller",
+          "tile_compute_unit",
+          "dma_engine",
+          "scheduler",
+          "top_npu"
+        ],
+        "pe_cols": 160,
+        "pe_count": 25600,
+        "pe_rows": 160,
+        "rationale": [
+          "Candidato valutato: balanced.",
+          "Famiglia architetturale scelta: tiled_systolic_transformer.",
+          "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 25000 unita'.",
+          "Dimensionamento iniziale in mesh 160x160 con tile 32x32.",
+          "Stimato throughput teorico di 51.20 TOPS a 1000 MHz.",
+          "Potenza stimata iniziale: 25.1 W.",
+          "Area stimata iniziale: 4.7 mm2.",
+          "Batch massimo 4: aumento buffer locale e ampiezza del fabric.",
+          "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
+        ],
+        "target_frequency_mhz": 1000.0,
+        "tile_cols": 32,
+        "tile_count": 25,
+        "tile_rows": 32
+      },
+      "candidate_id": "balanced",
+      "generated": {
+        "candidate_id": "balanced",
+        "generator_backend": "heuristic",
+        "notes": [
+          "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
+        ],
+        "primary_module": "top_npu",
+        "reference_cases_path": "runs/top_npu_check/candidates/balanced/verification_vectors.json",
+        "rtl_files": [
+          "runs/top_npu_check/candidates/balanced/rtl/mac_unit.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/processing_element.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/systolic_tile.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/dma_engine.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/scratchpad_controller.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/tile_compute_unit.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/scheduler.sv",
+          "runs/top_npu_check/candidates/balanced/rtl/top_npu.sv"
+        ],
+        "supporting_files": [
+          "runs/top_npu_check/candidates/balanced/design_intent.md",
+          "runs/top_npu_check/candidates/balanced/verification_vectors.json"
+        ],
+        "testbench_files": [
+          "runs/top_npu_check/candidates/balanced/tb/mac_unit_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/processing_element_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/systolic_tile_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/dma_engine_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/scratchpad_controller_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/tile_compute_unit_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/scheduler_tb.sv",
+          "runs/top_npu_check/candidates/balanced/tb/top_npu_tb.sv"
+        ]
+      },
+      "output_dir": "runs/top_npu_check/candidates/balanced",
+      "score": 63.04,
+      "tool_results": [
+        {
+          "available": true,
+          "log_path": "runs/top_npu_check/candidates/balanced/logs/python_reference.log",
+          "name": "python_reference",
+          "passed": true,
+          "return_code": 0,
+          "summary": "Golden model Python valido su 55 casi."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "verilator_lint",
+          "passed": null,
+          "return_code": null,
+          "summary": "verilator non installato; lint saltato."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "iverilog_sim",
+          "passed": null,
+          "return_code": null,
+          "summary": "iverilog non installato; simulazione saltata."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "yosys_synth",
+          "passed": null,
+          "return_code": null,
+          "summary": "yosys non installato; sintesi saltata."
+        }
+      ]
+    },
+    {
+      "architecture": {
+        "bus_width_bits": 1536,
+        "candidate_id": "throughput_max",
+        "estimated_area_mm2": 5.5,
+        "estimated_power_watts": 37.32,
+        "estimated_tops": 58.88,
+        "family": "tiled_systolic_transformer",
+        "global_buffer_mb": 6,
+        "local_sram_kb_per_tile": 640,
+        "modules": [
+          "mac_unit",
+          "processing_element",
+          "systolic_tile",
+          "scratchpad_controller",
+          "tile_compute_unit",
+          "dma_engine",
+          "scheduler",
+          "top_npu",
+          "prefetch_buffer"
+        ],
+        "pe_cols": 160,
+        "pe_count": 25600,
+        "pe_rows": 160,
+        "rationale": [
+          "Candidato valutato: throughput_max.",
+          "Famiglia architetturale scelta: tiled_systolic_transformer.",
+          "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 21740 unita'.",
+          "Dimensionamento iniziale in mesh 160x160 con tile 32x32.",
+          "Stimato throughput teorico di 58.88 TOPS a 1150 MHz.",
+          "Potenza stimata iniziale: 37.3 W.",
+          "Area stimata iniziale: 5.5 mm2.",
+          "Batch massimo 4: aumento buffer locale e ampiezza del fabric.",
+          "Profilo throughput_max: privilegio frequenza e banda rispetto al costo energetico."
+        ],
+        "target_frequency_mhz": 1150.0,
+        "tile_cols": 32,
+        "tile_count": 25,
+        "tile_rows": 32
+      },
+      "candidate_id": "throughput_max",
+      "generated": {
+        "candidate_id": "throughput_max",
+        "generator_backend": "heuristic",
+        "notes": [
+          "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
+        ],
+        "primary_module": "top_npu",
+        "reference_cases_path": "runs/top_npu_check/candidates/throughput_max/verification_vectors.json",
+        "rtl_files": [
+          "runs/top_npu_check/candidates/throughput_max/rtl/mac_unit.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/processing_element.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/systolic_tile.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/dma_engine.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/scratchpad_controller.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/tile_compute_unit.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/scheduler.sv",
+          "runs/top_npu_check/candidates/throughput_max/rtl/top_npu.sv"
+        ],
+        "supporting_files": [
+          "runs/top_npu_check/candidates/throughput_max/design_intent.md",
+          "runs/top_npu_check/candidates/throughput_max/verification_vectors.json"
+        ],
+        "testbench_files": [
+          "runs/top_npu_check/candidates/throughput_max/tb/mac_unit_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/processing_element_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/systolic_tile_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/dma_engine_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/scratchpad_controller_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/tile_compute_unit_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/scheduler_tb.sv",
+          "runs/top_npu_check/candidates/throughput_max/tb/top_npu_tb.sv"
+        ]
+      },
+      "output_dir": "runs/top_npu_check/candidates/throughput_max",
+      "score": 56.9,
+      "tool_results": [
+        {
+          "available": true,
+          "log_path": "runs/top_npu_check/candidates/throughput_max/logs/python_reference.log",
+          "name": "python_reference",
+          "passed": true,
+          "return_code": 0,
+          "summary": "Golden model Python valido su 55 casi."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "verilator_lint",
+          "passed": null,
+          "return_code": null,
+          "summary": "verilator non installato; lint saltato."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "iverilog_sim",
+          "passed": null,
+          "return_code": null,
+          "summary": "iverilog non installato; simulazione saltata."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "yosys_synth",
+          "passed": null,
+          "return_code": null,
+          "summary": "yosys non installato; sintesi saltata."
+        }
+      ]
+    },
+    {
+      "architecture": {
+        "bus_width_bits": 768,
+        "candidate_id": "efficiency",
+        "estimated_area_mm2": 5.38,
+        "estimated_power_watts": 18.74,
+        "estimated_tops": 54.0672,
+        "family": "tiled_systolic_transformer",
+        "global_buffer_mb": 7,
+        "local_sram_kb_per_tile": 576,
+        "modules": [
+          "mac_unit",
+          "processing_element",
+          "systolic_tile",
+          "scratchpad_controller",
+          "tile_compute_unit",
+          "dma_engine",
+          "scheduler",
+          "top_npu",
+          "clock_gating_unit"
+        ],
+        "pe_cols": 160,
+        "pe_count": 30720,
+        "pe_rows": 192,
+        "rationale": [
+          "Candidato valutato: efficiency.",
+          "Famiglia architetturale scelta: tiled_systolic_transformer.",
+          "Numero di MAC stimato con formula throughput / (2 * frequenza), pari a circa 28410 unita'.",
+          "Dimensionamento iniziale in mesh 192x160 con tile 32x32.",
+          "Stimato throughput teorico di 54.07 TOPS a 880 MHz.",
+          "Potenza stimata iniziale: 18.7 W.",
+          "Area stimata iniziale: 5.4 mm2.",
+          "Batch massimo 4: aumento buffer locale e ampiezza del fabric.",
+          "Profilo efficiency: riduco frequenza e banda per rientrare piu' facilmente nel budget di potenza."
+        ],
+        "target_frequency_mhz": 880.0,
+        "tile_cols": 32,
+        "tile_count": 30,
+        "tile_rows": 32
+      },
+      "candidate_id": "efficiency",
+      "generated": {
+        "candidate_id": "efficiency",
+        "generator_backend": "heuristic",
+        "notes": [
+          "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
+        ],
+        "primary_module": "top_npu",
+        "reference_cases_path": "runs/top_npu_check/candidates/efficiency/verification_vectors.json",
+        "rtl_files": [
+          "runs/top_npu_check/candidates/efficiency/rtl/mac_unit.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/processing_element.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/systolic_tile.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/dma_engine.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/scratchpad_controller.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/tile_compute_unit.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/scheduler.sv",
+          "runs/top_npu_check/candidates/efficiency/rtl/top_npu.sv"
+        ],
+        "supporting_files": [
+          "runs/top_npu_check/candidates/efficiency/design_intent.md",
+          "runs/top_npu_check/candidates/efficiency/verification_vectors.json"
+        ],
+        "testbench_files": [
+          "runs/top_npu_check/candidates/efficiency/tb/mac_unit_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/processing_element_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/systolic_tile_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/dma_engine_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/scratchpad_controller_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/tile_compute_unit_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/scheduler_tb.sv",
+          "runs/top_npu_check/candidates/efficiency/tb/top_npu_tb.sv"
+        ]
+      },
+      "output_dir": "runs/top_npu_check/candidates/efficiency",
+      "score": 60.75,
+      "tool_results": [
+        {
+          "available": true,
+          "log_path": "runs/top_npu_check/candidates/efficiency/logs/python_reference.log",
+          "name": "python_reference",
+          "passed": true,
+          "return_code": 0,
+          "summary": "Golden model Python valido su 55 casi."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "verilator_lint",
+          "passed": null,
+          "return_code": null,
+          "summary": "verilator non installato; lint saltato."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "iverilog_sim",
+          "passed": null,
+          "return_code": null,
+          "summary": "iverilog non installato; simulazione saltata."
+        },
+        {
+          "available": false,
+          "log_path": null,
+          "name": "yosys_synth",
+          "passed": null,
+          "return_code": null,
+          "summary": "yosys non installato; sintesi saltata."
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "llm": {
+      "available": true,
+      "effective_backend": "heuristic",
+      "live_generation_enabled": false,
+      "model": null,
+      "reason": "Backend euristico locale attivo.",
+      "requested_backend": "heuristic"
+    },
+    "toolchain": [
+      {
+        "available": false,
+        "install_hint": "brew install icarus-verilog",
+        "kind": "simulation",
+        "name": "iverilog",
+        "path": null
+      },
+      {
+        "available": false,
+        "install_hint": "brew install verilator",
+        "kind": "lint",
+        "name": "verilator",
+        "path": null
+      },
+      {
+        "available": false,
+        "install_hint": "brew install yosys",
+        "kind": "synthesis",
+        "name": "yosys",
+        "path": null
+      }
+    ]
+  },
+  "generated": {
+    "candidate_id": "balanced",
+    "generator_backend": "heuristic",
+    "notes": [
+      "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
+    ],
+    "primary_module": "top_npu",
+    "reference_cases_path": "runs/top_npu_check/candidates/balanced/verification_vectors.json",
+    "rtl_files": [
+      "runs/top_npu_check/candidates/balanced/rtl/mac_unit.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/processing_element.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/systolic_tile.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/dma_engine.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/scratchpad_controller.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/tile_compute_unit.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/scheduler.sv",
+      "runs/top_npu_check/candidates/balanced/rtl/top_npu.sv"
+    ],
+    "supporting_files": [
+      "runs/top_npu_check/candidates/balanced/design_intent.md",
+      "runs/top_npu_check/candidates/balanced/verification_vectors.json"
+    ],
+    "testbench_files": [
+      "runs/top_npu_check/candidates/balanced/tb/mac_unit_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/processing_element_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/systolic_tile_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/dma_engine_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/scratchpad_controller_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/tile_compute_unit_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/scheduler_tb.sv",
+      "runs/top_npu_check/candidates/balanced/tb/top_npu_tb.sv"
+    ]
+  },
+  "output_dir": "runs/top_npu_check",
+  "score": 63.04,
+  "spec": {
+    "ambiguities": [
+      "Budget di potenza assente o non parsabile.",
+      "Nodo tecnologico assente.",
+      "Frequenza target assente."
+    ],
+    "area_budget_mm2": null,
+    "assumptions": [
+      "Interfacce non dichiarate: assumo AXI4, DMA e scratchpad SRAM.",
+      "Nodo tecnologico non specificato: uso una baseline generica 5nm ASIC.",
+      "Frequenza target non specificata: assumo 1000 MHz per la stima iniziale."
+    ],
+    "batch_max": 4,
+    "batch_min": 1,
+    "interfaces": [
+      "AXI4",
+      "DMA",
+      "scratchpad_sram"
+    ],
+    "latency_budget_ms": null,
+    "numeric_precision": "INT8",
+    "original_text": "Voglio una NPU INT8 da 50 TOPS con supporto transformer e batch 1-4.",
+    "power_budget_watts": null,
+    "target_frequency_mhz": null,
+    "target_technology": null,
+    "throughput_unit": "TOPS",
+    "throughput_value": 50.0,
+    "workload_type": "transformer"
+  },
+  "tool_results": [
+    {
+      "available": true,
+      "log_path": "runs/top_npu_check/candidates/balanced/logs/python_reference.log",
+      "name": "python_reference",
+      "passed": true,
+      "return_code": 0,
+      "summary": "Golden model Python valido su 55 casi."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "verilator_lint",
+      "passed": null,
+      "return_code": null,
+      "summary": "verilator non installato; lint saltato."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "iverilog_sim",
+      "passed": null,
+      "return_code": null,
+      "summary": "iverilog non installato; simulazione saltata."
+    },
+    {
+      "available": false,
+      "log_path": null,
+      "name": "yosys_synth",
+      "passed": null,
+      "return_code": null,
+      "summary": "yosys non installato; sintesi saltata."
+    }
+  ]
+}

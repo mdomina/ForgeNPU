@@ -40,6 +40,24 @@ def score_design(
                 * 10.0,
             )
 
+    if spec.available_memory_mb is not None:
+        estimated_memory_mb = _estimate_total_local_memory_mb(architecture)
+        if estimated_memory_mb <= spec.available_memory_mb:
+            score += 5.0
+        else:
+            overflow_ratio = (estimated_memory_mb - spec.available_memory_mb) / spec.available_memory_mb
+            score -= min(10.0, overflow_ratio * 15.0)
+
+    if spec.memory_bandwidth_gb_per_s is not None:
+        estimated_bandwidth_gb_per_s = _estimate_bus_bandwidth_gb_per_s(architecture)
+        if estimated_bandwidth_gb_per_s >= spec.memory_bandwidth_gb_per_s:
+            score += 8.0
+        else:
+            deficit_ratio = (
+                spec.memory_bandwidth_gb_per_s - estimated_bandwidth_gb_per_s
+            ) / spec.memory_bandwidth_gb_per_s
+            score -= min(15.0, deficit_ratio * 20.0)
+
     tool_weights = {
         "python_reference": 15.0,
         "verilator_lint": 20.0,
@@ -57,3 +75,13 @@ def score_design(
         score -= min(10.0, float(len(spec.ambiguities) * 2))
 
     return round(max(0.0, min(score, 100.0)), 2)
+
+
+def _estimate_total_local_memory_mb(architecture: ArchitectureCandidate) -> float:
+    return architecture.global_buffer_mb + (
+        architecture.local_sram_kb_per_tile * architecture.tile_count
+    ) / 1024.0
+
+
+def _estimate_bus_bandwidth_gb_per_s(architecture: ArchitectureCandidate) -> float:
+    return (architecture.bus_width_bits * architecture.target_frequency_mhz) / 8000.0

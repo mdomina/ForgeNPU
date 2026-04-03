@@ -114,6 +114,8 @@ def scratchpad_controller_reference(
 ) -> List[Dict[str, List[int]]]:
     activation_bank = [[0 for _ in range(rows)] for _ in range(depth)]
     weight_bank = [[0 for _ in range(cols)] for _ in range(depth)]
+    activation_valid = [False for _ in range(depth)]
+    weight_valid = [False for _ in range(depth)]
     snapshots: List[Dict[str, List[int]]] = []
 
     for step in steps:
@@ -123,18 +125,26 @@ def scratchpad_controller_reference(
             {
                 "activations_west_o": list(activation_bank[activation_read_addr]),
                 "weights_north_o": list(weight_bank[weight_read_addr]),
-                "vector_valid_o": int(bool(step["load_vector_en_i"])),
+                "vector_valid_o": int(
+                    bool(step["load_vector_en_i"])
+                    and activation_valid[activation_read_addr]
+                    and weight_valid[weight_read_addr]
+                ),
             }
         )
 
         if bool(step["write_activations_en_i"]):
-            activation_bank[int(step["activation_write_addr_i"])] = [
+            activation_write_addr = int(step["activation_write_addr_i"])
+            activation_bank[activation_write_addr] = [
                 int(value) for value in step["activations_write_data_i"]
             ]
+            activation_valid[activation_write_addr] = True
         if bool(step["write_weights_en_i"]):
-            weight_bank[int(step["weight_write_addr_i"])] = [
+            weight_write_addr = int(step["weight_write_addr_i"])
+            weight_bank[weight_write_addr] = [
                 int(value) for value in step["weights_write_data_i"]
             ]
+            weight_valid[weight_write_addr] = True
 
     return snapshots
 
@@ -181,6 +191,8 @@ def tile_compute_unit_reference(
 ) -> List[Dict[str, List[int]]]:
     activation_bank = [[0 for _ in range(rows)] for _ in range(depth)]
     weight_bank = [[0 for _ in range(cols)] for _ in range(depth)]
+    activation_valid = [False for _ in range(depth)]
+    weight_valid = [False for _ in range(depth)]
     activation_regs = [[0 for _ in range(cols)] for _ in range(rows)]
     weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
     psum_regs = [[0 for _ in range(cols)] for _ in range(rows)]
@@ -196,7 +208,9 @@ def tile_compute_unit_reference(
         weight_read_addr = int(step["weight_read_addr_i"])
         activations_west = list(activation_bank[activation_read_addr])
         weights_north = list(weight_bank[weight_read_addr])
-        load_vector = bool(step["load_vector_en_i"])
+        scratchpad_vector_valid = bool(step["load_vector_en_i"]) and activation_valid[
+            activation_read_addr
+        ] and weight_valid[weight_read_addr]
         compute_en = bool(step["compute_en_i"])
         clear_acc = bool(step["clear_acc_i"])
 
@@ -207,7 +221,7 @@ def tile_compute_unit_reference(
         next_psum_regs = [row[:] for row in psum_regs]
         next_valid_regs = [row[:] for row in valid_regs]
 
-        if load_vector:
+        if scratchpad_vector_valid:
             for row in range(rows):
                 for col in range(cols - 1, -1, -1):
                     if col == 0:
@@ -244,17 +258,19 @@ def tile_compute_unit_reference(
             {
                 "psums_o": _flatten_matrix(psum_regs),
                 "valids_o": [int(value) for value in _flatten_matrix(valid_regs)],
-                "scratchpad_vector_valid_o": int(load_vector),
+                "scratchpad_vector_valid_o": int(scratchpad_vector_valid),
             }
         )
 
         if pending_dma_valid:
             if pending_dma_write_weights:
                 weight_bank[pending_dma_addr] = [int(value) for value in pending_dma_payload[:cols]]
+                weight_valid[pending_dma_addr] = True
             else:
                 activation_bank[pending_dma_addr] = [
                     int(value) for value in pending_dma_payload[:rows]
                 ]
+                activation_valid[pending_dma_addr] = True
 
         if bool(step["dma_valid_i"]):
             pending_dma_valid = True

@@ -28,9 +28,17 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
     pe_count = pe_rows * pe_cols
 
     tile_count = math.ceil(pe_count / float(tile_edge * tile_edge))
-    local_sram_kb_per_tile = _choose_local_sram(spec, candidate_id)
-    global_buffer_mb = max(4, tile_count // 4)
-    bus_width_bits = _choose_bus_width(throughput_tops, candidate_id)
+    local_sram_kb_per_tile, global_buffer_mb = _choose_memory_hierarchy(
+        spec=spec,
+        candidate_id=candidate_id,
+        tile_count=tile_count,
+    )
+    bus_width_bits = _choose_bus_width(
+        throughput_tops=throughput_tops,
+        candidate_id=candidate_id,
+        spec=spec,
+        target_frequency_mhz=target_frequency_mhz,
+    )
     estimated_tops = (pe_count * 2.0 * target_frequency_hz) / 1_000_000_000_000.0
     estimated_power_watts = _estimate_power(
         pe_count=pe_count,
@@ -89,6 +97,22 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
             f"Budget di potenza rilevato: {spec.power_budget_watts:.0f} W."
         )
 
+    if spec.available_memory_mb is not None:
+        rationale.append(
+            "Budget memoria locale rilevato: "
+            f"{spec.available_memory_mb:.2f} MB distribuiti tra SRAM per tile e global buffer."
+        )
+
+    if spec.memory_bandwidth_gb_per_s is not None:
+        rationale.append(
+            f"Vincolo di bandwidth memoria rilevato: {spec.memory_bandwidth_gb_per_s:.2f} GB/s."
+        )
+        rationale.append(
+            "Bus esterno dimensionato a "
+            f"{bus_width_bits} bit per circa "
+            f"{_estimate_bus_bandwidth_gb_per_s(bus_width_bits, target_frequency_mhz):.2f} GB/s teorici."
+        )
+
     rationale.append(_candidate_rationale(candidate_id))
 
     return ArchitectureCandidate(
@@ -138,7 +162,42 @@ def _choose_tile_edge(throughput_tops: float) -> int:
     return 8
 
 
-def _choose_local_sram(spec: RequirementSpec, candidate_id: str) -> int:
+def _choose_memory_hierarchy(
+    spec: RequirementSpec,
+    candidate_id: str,
+    tile_count: int,
+) -> tuple[int, int]:
+    local_sram_kb_per_tile = _baseline_local_sram_kb(spec, candidate_id)
+    global_buffer_mb = _baseline_global_buffer_mb(tile_count, candidate_id)
+
+    if spec.available_memory_mb is None:
+        return local_sram_kb_per_tile, global_buffer_mb
+
+    budget_mb = max(0.25, float(spec.available_memory_mb))
+    total_memory_mb = global_buffer_mb + ((local_sram_kb_per_tile * tile_count) / 1024.0)
+    if total_memory_mb <= budget_mb:
+        return local_sram_kb_per_tile, global_buffer_mb
+
+    scale = max(0.25, budget_mb / total_memory_mb)
+    scaled_local_sram_kb = max(64, _round_up(int(local_sram_kb_per_tile * scale), 64))
+    scaled_global_buffer_mb = max(1, int(math.floor(global_buffer_mb * scale)))
+
+    while (
+        scaled_global_buffer_mb + ((scaled_local_sram_kb * tile_count) / 1024.0) > budget_mb
+        and scaled_local_sram_kb > 64
+    ):
+        scaled_local_sram_kb = max(64, scaled_local_sram_kb - 64)
+
+    while (
+        scaled_global_buffer_mb + ((scaled_local_sram_kb * tile_count) / 1024.0) > budget_mb
+        and scaled_global_buffer_mb > 1
+    ):
+        scaled_global_buffer_mb -= 1
+
+    return scaled_local_sram_kb, scaled_global_buffer_mb
+
+
+def _baseline_local_sram_kb(spec: RequirementSpec, candidate_id: str) -> int:
     base_kb = 256 if spec.numeric_precision.startswith("INT") else 512
     if spec.workload_type == "transformer":
         base_kb += 256
@@ -151,7 +210,21 @@ def _choose_local_sram(spec: RequirementSpec, candidate_id: str) -> int:
     return base_kb
 
 
-def _choose_bus_width(throughput_tops: float, candidate_id: str) -> int:
+def _baseline_global_buffer_mb(tile_count: int, candidate_id: str) -> int:
+    base_global_buffer_mb = max(4, math.ceil(tile_count / 4.0))
+    if candidate_id == "throughput_max":
+        return base_global_buffer_mb + 2
+    if candidate_id == "efficiency":
+        return max(2, base_global_buffer_mb - 1)
+    return base_global_buffer_mb
+
+
+def _choose_bus_width(
+    throughput_tops: float,
+    candidate_id: str,
+    spec: RequirementSpec,
+    target_frequency_mhz: float,
+) -> int:
     if throughput_tops >= 500.0:
         base_width = 2048
     elif throughput_tops >= 50.0:
@@ -161,11 +234,24 @@ def _choose_bus_width(throughput_tops: float, candidate_id: str) -> int:
     else:
         base_width = 256
 
+    required_width = 0
+    if spec.memory_bandwidth_gb_per_s is not None:
+        required_width = _round_up(
+            int(
+                math.ceil(
+                    (spec.memory_bandwidth_gb_per_s * 8000.0)
+                    / max(target_frequency_mhz, 1.0)
+                )
+            ),
+            256,
+        )
+        base_width = max(base_width, required_width)
+
     if candidate_id == "throughput_max":
-        return base_width + 512
+        base_width += 512
     if candidate_id == "efficiency":
-        return max(256, base_width - 256)
-    return base_width
+        base_width = max(256, base_width - 256)
+    return max(base_width, required_width)
 
 
 def _resolve_frequency(spec: RequirementSpec, candidate_id: str) -> float:
@@ -209,3 +295,7 @@ def _candidate_rationale(candidate_id: str) -> str:
 
 def _round_up(value: int, multiple: int) -> int:
     return int(math.ceil(value / float(multiple)) * multiple)
+
+
+def _estimate_bus_bandwidth_gb_per_s(bus_width_bits: int, target_frequency_mhz: float) -> float:
+    return (bus_width_bits * target_frequency_mhz) / 8000.0

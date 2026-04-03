@@ -54,8 +54,19 @@ def _build_execution_report(
             "cases": [],
         }
 
-    case_reports = [_build_case_report(case, architecture=architecture) for case in top_level_cases]
-    summary = _summarize_case_reports(case_reports, architecture=architecture)
+    case_reports = [
+        _build_case_report(
+            case,
+            architecture=architecture,
+            operand_width_bits=bundle.operand_width_bits,
+        )
+        for case in top_level_cases
+    ]
+    summary = _summarize_case_reports(
+        case_reports,
+        architecture=architecture,
+        operand_width_bits=bundle.operand_width_bits,
+    )
 
     return {
         "available": bool(case_reports),
@@ -70,6 +81,7 @@ def _build_execution_report(
 def _build_case_report(
     case: Dict[str, Any],
     architecture: Optional[ArchitectureCandidate] = None,
+    operand_width_bits: int = 8,
 ) -> Dict[str, Any]:
     rows = int(case.get("rows", 2))
     cols = int(case.get("cols", 2))
@@ -122,7 +134,14 @@ def _build_case_report(
             }
         )
 
-    case_summary = _summarize_trace(trace=trace, rows=rows, cols=cols)
+    case_summary = _summarize_trace(
+        trace=trace,
+        rows=rows,
+        cols=cols,
+        depth=depth,
+        operand_width_bits=operand_width_bits,
+        architecture=architecture,
+    )
 
     return {
         "name": case["name"],
@@ -208,6 +227,20 @@ def _empty_summary() -> Dict[str, Any]:
             "load_cycles": 0,
             "activation_elements_transferred": 0,
             "weight_elements_transferred": 0,
+            "max_scratchpad_depth": 0,
+            "activation_slots_touched": 0,
+            "weight_slots_touched": 0,
+            "peak_activation_slots_live": 0,
+            "peak_weight_slots_live": 0,
+            "working_set_utilization": 0.0,
+            "total_dma_bits_transferred": 0,
+            "average_dma_bits_per_dma_cycle": 0.0,
+            "peak_dma_bits_per_cycle": 0,
+            "effective_external_bandwidth_gb_per_s": 0.0,
+            "peak_external_bandwidth_gb_per_s": 0.0,
+            "theoretical_bus_bandwidth_gb_per_s": 0.0,
+            "bus_bandwidth_utilization": 0.0,
+            "peak_bus_bandwidth_utilization": 0.0,
         },
         "compute_path": {
             "compute_cycles": 0,
@@ -223,13 +256,23 @@ def _empty_summary() -> Dict[str, Any]:
 def _summarize_case_reports(
     case_reports: List[Dict[str, Any]],
     architecture: Optional[ArchitectureCandidate] = None,
+    operand_width_bits: int = 8,
 ) -> Dict[str, Any]:
     summary = _empty_summary()
     summary["top_level_case_count"] = len(case_reports)
+    activation_slots_touched = set()
+    weight_slots_touched = set()
 
     for case_report in case_reports:
         rows = int(case_report["rows"])
         cols = int(case_report["cols"])
+        depth = int(case_report.get("depth", 0))
+        activation_slots_live = set()
+        weight_slots_live = set()
+        summary["memory_path"]["max_scratchpad_depth"] = max(
+            summary["memory_path"]["max_scratchpad_depth"],
+            depth,
+        )
         for step in case_report["trace"]:
             state_name = str(step["scheduler_state"]["name"])
             summary["total_cycles"] += 1
@@ -247,15 +290,29 @@ def _summarize_case_reports(
 
             if memory_path["dma_valid"]:
                 summary["memory_path"]["dma_cycles"] += 1
+                dma_bits_this_cycle = 0
                 if memory_path["dma_write_weights"]:
                     summary["memory_path"]["dma_weight_cycles"] += 1
                     summary["memory_path"]["weight_elements_transferred"] += cols
+                    weight_slots_live.add(int(memory_path["dma_addr"]))
+                    weight_slots_touched.add(int(memory_path["dma_addr"]))
+                    dma_bits_this_cycle = cols * operand_width_bits
                 else:
                     summary["memory_path"]["dma_activation_cycles"] += 1
                     summary["memory_path"]["activation_elements_transferred"] += rows
+                    activation_slots_live.add(int(memory_path["dma_addr"]))
+                    activation_slots_touched.add(int(memory_path["dma_addr"]))
+                    dma_bits_this_cycle = rows * operand_width_bits
+                summary["memory_path"]["total_dma_bits_transferred"] += dma_bits_this_cycle
+                summary["memory_path"]["peak_dma_bits_per_cycle"] = max(
+                    summary["memory_path"]["peak_dma_bits_per_cycle"],
+                    dma_bits_this_cycle,
+                )
 
             if memory_path["load_vector_en"]:
                 summary["memory_path"]["load_cycles"] += 1
+                activation_slots_touched.add(int(memory_path["activation_read_addr"]))
+                weight_slots_touched.add(int(memory_path["weight_read_addr"]))
 
             if compute_path["compute_en"]:
                 summary["compute_path"]["compute_cycles"] += 1
@@ -277,6 +334,57 @@ def _summarize_case_reports(
                 summary["compute_path"]["peak_abs_psum"],
                 max((abs(int(value)) for value in compute_path["psums"]), default=0),
             )
+            summary["memory_path"]["peak_activation_slots_live"] = max(
+                summary["memory_path"]["peak_activation_slots_live"],
+                len(activation_slots_live),
+            )
+            summary["memory_path"]["peak_weight_slots_live"] = max(
+                summary["memory_path"]["peak_weight_slots_live"],
+                len(weight_slots_live),
+            )
+
+    summary["memory_path"]["activation_slots_touched"] = len(activation_slots_touched)
+    summary["memory_path"]["weight_slots_touched"] = len(weight_slots_touched)
+    max_scratchpad_depth = int(summary["memory_path"]["max_scratchpad_depth"])
+    if max_scratchpad_depth > 0:
+        summary["memory_path"]["working_set_utilization"] = round(
+            (
+                len(activation_slots_touched) + len(weight_slots_touched)
+            )
+            / float(2 * max_scratchpad_depth),
+            6,
+        )
+
+    dma_cycles = int(summary["memory_path"]["dma_cycles"])
+    if dma_cycles > 0:
+        summary["memory_path"]["average_dma_bits_per_dma_cycle"] = round(
+            summary["memory_path"]["total_dma_bits_transferred"] / float(dma_cycles),
+            6,
+        )
+
+    if architecture is not None:
+        theoretical_bandwidth = _estimate_bus_bandwidth_gb_per_s(architecture)
+        effective_bandwidth = _estimate_external_bandwidth_gb_per_s(
+            transferred_bits=int(summary["memory_path"]["total_dma_bits_transferred"]),
+            total_cycles=int(summary["total_cycles"]),
+            target_frequency_mhz=float(architecture.target_frequency_mhz),
+        )
+        peak_bandwidth = _estimate_peak_external_bandwidth_gb_per_s(
+            peak_dma_bits_per_cycle=int(summary["memory_path"]["peak_dma_bits_per_cycle"]),
+            target_frequency_mhz=float(architecture.target_frequency_mhz),
+        )
+        summary["memory_path"]["effective_external_bandwidth_gb_per_s"] = effective_bandwidth
+        summary["memory_path"]["peak_external_bandwidth_gb_per_s"] = peak_bandwidth
+        summary["memory_path"]["theoretical_bus_bandwidth_gb_per_s"] = theoretical_bandwidth
+        if theoretical_bandwidth > 0.0:
+            summary["memory_path"]["bus_bandwidth_utilization"] = round(
+                effective_bandwidth / theoretical_bandwidth,
+                6,
+            )
+            summary["memory_path"]["peak_bus_bandwidth_utilization"] = round(
+                peak_bandwidth / theoretical_bandwidth,
+                6,
+            )
 
     summary["top_npu_throughput"] = _estimate_top_npu_throughput(
         summary=summary,
@@ -286,13 +394,25 @@ def _summarize_case_reports(
     return summary
 
 
-def _summarize_trace(trace: List[Dict[str, Any]], rows: int, cols: int) -> Dict[str, Any]:
+def _summarize_trace(
+    trace: List[Dict[str, Any]],
+    rows: int,
+    cols: int,
+    depth: int,
+    operand_width_bits: int,
+    architecture: Optional[ArchitectureCandidate],
+) -> Dict[str, Any]:
     case_report = {
         "rows": rows,
         "cols": cols,
+        "depth": depth,
         "trace": trace,
     }
-    summary = _summarize_case_reports([case_report])
+    summary = _summarize_case_reports(
+        [case_report],
+        architecture=architecture,
+        operand_width_bits=operand_width_bits,
+    )
     summary.pop("top_npu_throughput", None)
     return summary
 
@@ -359,3 +479,30 @@ def _estimate_top_npu_throughput(
         }
     )
     return throughput_summary
+
+
+def _estimate_external_bandwidth_gb_per_s(
+    transferred_bits: int,
+    total_cycles: int,
+    target_frequency_mhz: float,
+) -> float:
+    if total_cycles <= 0:
+        return 0.0
+    return round(
+        (transferred_bits * target_frequency_mhz) / (8000.0 * total_cycles),
+        6,
+    )
+
+
+def _estimate_peak_external_bandwidth_gb_per_s(
+    peak_dma_bits_per_cycle: int,
+    target_frequency_mhz: float,
+) -> float:
+    return round((peak_dma_bits_per_cycle * target_frequency_mhz) / 8000.0, 6)
+
+
+def _estimate_bus_bandwidth_gb_per_s(architecture: ArchitectureCandidate) -> float:
+    return round(
+        (architecture.bus_width_bits * architecture.target_frequency_mhz) / 8000.0,
+        6,
+    )

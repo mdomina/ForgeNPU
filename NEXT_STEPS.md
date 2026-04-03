@@ -32,10 +32,10 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 ## Verifica Hardware Reale
 
-- [ ] Abilitare `iverilog` per compilazione e simulazione reali.
-- [ ] Abilitare `verilator` per lint automatico.
-- [ ] Abilitare `yosys` per sintesi logica.
-- [ ] Salvare nei report metriche di compilazione, simulazione e sintesi per ogni candidato.
+- [x] Abilitare `iverilog` per compilazione e simulazione reali.
+- [x] Abilitare `verilator` per lint automatico.
+- [x] Abilitare `yosys` per sintesi logica.
+- [x] Salvare nei report metriche di compilazione, simulazione e sintesi per ogni candidato.
 
 ## Evoluzione del Compute Cluster
 
@@ -48,7 +48,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 - [ ] Migliorare `scratchpad_controller` con piu' banchi o doppio buffering.
 - [ ] Introdurre primitive di load/store piu' vicine a un flusso NPU reale.
-- [ ] Modellare bandwidth e occupazione memoria nelle metriche.
+- [x] Modellare bandwidth e occupazione memoria nelle metriche.
 
 ## Top-Level NPU
 
@@ -59,7 +59,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 ## Requirement System
 
-- [ ] Estendere il parser con memoria disponibile, area target, latenza e bandwidth.
+- [x] Estendere il parser con memoria disponibile, area target, latenza e bandwidth.
 - [ ] Supportare piu' workload oltre `dense_gemm` e `transformer`.
 - [ ] Ridurre le assunzioni implicite aumentando i campi strutturati del requirement.
 

@@ -175,6 +175,7 @@ def emit_seed_rtl(
             str(top_npu_tb_path),
         ],
         primary_module="top_npu",
+        operand_width_bits=operand_width,
         supporting_files=supporting_files,
         reference_cases_path=str(reference_cases_path),
         candidate_id=candidate_id,
@@ -664,6 +665,8 @@ def _scratchpad_controller_template(operand_width: int) -> str:
 );
   logic signed [ROWS*DATA_WIDTH-1:0] activation_bank [0:DEPTH-1];
   logic signed [COLS*DATA_WIDTH-1:0] weight_bank [0:DEPTH-1];
+  logic activation_valid_bank [0:DEPTH-1];
+  logic weight_valid_bank [0:DEPTH-1];
   integer bank_idx;
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -671,13 +674,17 @@ def _scratchpad_controller_template(operand_width: int) -> str:
       for (bank_idx = 0; bank_idx < DEPTH; bank_idx = bank_idx + 1) begin
         activation_bank[bank_idx] <= '0;
         weight_bank[bank_idx] <= '0;
+        activation_valid_bank[bank_idx] <= 1'b0;
+        weight_valid_bank[bank_idx] <= 1'b0;
       end
     end else begin
       if (write_activations_en_i) begin
         activation_bank[activation_write_addr_i] <= activations_write_data_i;
+        activation_valid_bank[activation_write_addr_i] <= 1'b1;
       end
       if (write_weights_en_i) begin
         weight_bank[weight_write_addr_i] <= weights_write_data_i;
+        weight_valid_bank[weight_write_addr_i] <= 1'b1;
       end
     end
   end
@@ -685,7 +692,9 @@ def _scratchpad_controller_template(operand_width: int) -> str:
   always_comb begin
     activations_west_o = activation_bank[activation_read_addr_i];
     weights_north_o = weight_bank[weight_read_addr_i];
-    vector_valid_o = load_vector_en_i;
+    vector_valid_o = load_vector_en_i &&
+      activation_valid_bank[activation_read_addr_i] &&
+      weight_valid_bank[weight_read_addr_i];
   end
 endmodule
 """
@@ -995,13 +1004,14 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
     input integer act1,
     input integer w0,
     input integer w1,
+    input logic request_load,
     input logic expected_valid
   );
     begin
       idle_controls();
       activation_read_addr_i = act_addr[ADDR_WIDTH-1:0];
       weight_read_addr_i = weight_addr[ADDR_WIDTH-1:0];
-      load_vector_en_i = expected_valid;
+      load_vector_en_i = request_load;
       @(posedge clk);
       #1;
       if ($signed(activations_west_o[0 +: DATA_WIDTH]) !== act0 ||
@@ -1028,9 +1038,10 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
     write_activation_vector(1, 3, 4);
     write_weight_vector(1, 7, 8);
 
-    load_and_expect(0, 0, 1, 2, 5, 6, 1'b1);
-    load_and_expect(1, 1, 3, 4, 7, 8, 1'b1);
-    load_and_expect(1, 1, 3, 4, 7, 8, 1'b0);
+    load_and_expect(0, 0, 1, 2, 5, 6, 1'b1, 1'b1);
+    load_and_expect(1, 1, 3, 4, 7, 8, 1'b1, 1'b1);
+    load_and_expect(1, 1, 3, 4, 7, 8, 1'b0, 1'b0);
+    load_and_expect(3, 3, 0, 0, 0, 0, 1'b1, 1'b0);
 
     $display("scratchpad_controller_tb passed");
     $finish;
@@ -2022,8 +2033,8 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 0, 0, 0, 0, 0, 0, 0, 8'b0000_1111);
+    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
 
     rst_n = 1'b0;
     tile_enable_i = 2'b11;
@@ -2035,8 +2046,8 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 5, 6, 0, 0, 8'b1111_1111);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 6, 0, 0, 5, 6, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 0, 0, 0, 5, 0, 0, 0, 8'b1111_1111);
+    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 0, 0, 0, 5, 0, 0, 0, 8'b0000_0000);
 
     $display("top_npu_tb passed");
     $finish;
@@ -2455,9 +2466,9 @@ def _top_npu_short_sequence_case() -> Dict[str, object]:
         {"start_i": 0, "expected": {"scheduler_state_o": 2, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
         {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
         {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 4, "busy_o": 1, "done_o": 0, "psums_o": [5, 6, 0, 0], "valids_o": [1, 1, 1, 1]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 6, "busy_o": 0, "done_o": 1, "psums_o": [5, 6, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 0, "busy_o": 0, "done_o": 0, "psums_o": [5, 6, 0, 0], "valids_o": [0, 0, 0, 0]}},
+        {"start_i": 0, "expected": {"scheduler_state_o": 4, "busy_o": 1, "done_o": 0, "psums_o": [5, 0, 0, 0], "valids_o": [1, 1, 1, 1]}},
+        {"start_i": 0, "expected": {"scheduler_state_o": 6, "busy_o": 0, "done_o": 1, "psums_o": [5, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
+        {"start_i": 0, "expected": {"scheduler_state_o": 0, "busy_o": 0, "done_o": 0, "psums_o": [5, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
     ]
 
     steps = []
@@ -2531,7 +2542,7 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
                 "scheduler_state_o": 4,
                 "busy_o": 1,
                 "done_o": 0,
-                "psums_o": [5, 6, 0, 0, 5, 6, 0, 0],
+                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
                 "valids_o": [1, 1, 1, 1, 1, 1, 1, 1],
             },
         },
@@ -2541,7 +2552,7 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
                 "scheduler_state_o": 6,
                 "busy_o": 0,
                 "done_o": 1,
-                "psums_o": [5, 6, 0, 0, 5, 6, 0, 0],
+                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
                 "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
             },
         },
@@ -2551,7 +2562,7 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
                 "scheduler_state_o": 0,
                 "busy_o": 0,
                 "done_o": 0,
-                "psums_o": [5, 6, 0, 0, 5, 6, 0, 0],
+                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
                 "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
             },
         },
@@ -2868,6 +2879,22 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                             "vector_valid_o": 1,
                         },
                     },
+                    {
+                        "write_activations_en_i": 0,
+                        "activation_write_addr_i": 0,
+                        "activations_write_data_i": [0, 0],
+                        "write_weights_en_i": 0,
+                        "weight_write_addr_i": 0,
+                        "weights_write_data_i": [0, 0],
+                        "load_vector_en_i": 1,
+                        "activation_read_addr_i": 3,
+                        "weight_read_addr_i": 3,
+                        "expected": {
+                            "activations_west_o": [0, 0],
+                            "weights_north_o": [0, 0],
+                            "vector_valid_o": 0,
+                        },
+                    },
                 ],
             }
         ],
@@ -3101,6 +3128,8 @@ def _design_intent_template(
 - Precisione: {spec.numeric_precision}
 - Throughput target: {spec.throughput_value} {spec.throughput_unit}
 - Potenza: {spec.power_budget_watts} W
+- Memoria disponibile: {spec.available_memory_mb} MB
+- Bandwidth memoria: {spec.memory_bandwidth_gb_per_s} GB/s
 - Workload: {spec.workload_type}
 - Batch: {spec.batch_min}-{spec.batch_max}
 - Interfacce: {", ".join(spec.interfaces)}

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from create_npu.architect import plan_architecture
 from create_npu.benchmark import run_regression_benchmark
 from create_npu.harness import VerificationHarness
 from create_npu.models import (
@@ -32,6 +33,45 @@ class RequirementParserTest(unittest.TestCase):
         self.assertEqual(spec.batch_min, 1)
         self.assertEqual(spec.batch_max, 16)
         self.assertEqual(spec.workload_type, "transformer")
+
+    def test_parse_memory_and_bandwidth_requirement(self) -> None:
+        parser = RequirementParser()
+        spec = parser.parse(
+            "Voglio una NPU INT8 da 2 TOPS per transformer con 4 MB di SRAM, "
+            "500 GB/s e 1 GHz."
+        )
+
+        self.assertEqual(spec.available_memory_mb, 4.0)
+        self.assertEqual(spec.memory_bandwidth_gb_per_s, 500.0)
+        self.assertEqual(spec.target_frequency_mhz, 1000.0)
+
+
+class ArchitecturePlanningTest(unittest.TestCase):
+    def test_plan_architecture_respects_memory_and_bandwidth_hints(self) -> None:
+        architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 2 TOPS transformer con 4 MB e 500 GB/s.",
+                numeric_precision="INT8",
+                throughput_value=2.0,
+                throughput_unit="TOPS",
+                available_memory_mb=4.0,
+                memory_bandwidth_gb_per_s=500.0,
+                workload_type="transformer",
+                batch_min=1,
+                batch_max=4,
+                target_frequency_mhz=1000.0,
+            )
+        )
+
+        total_local_memory_mb = architecture.global_buffer_mb + (
+            architecture.local_sram_kb_per_tile * architecture.tile_count
+        ) / 1024.0
+        sustained_bandwidth_gb_per_s = (
+            architecture.bus_width_bits * architecture.target_frequency_mhz
+        ) / 8000.0
+
+        self.assertLessEqual(total_local_memory_mb, 4.0)
+        self.assertGreaterEqual(sustained_bandwidth_gb_per_s, 500.0)
 
 
 class PipelineTest(unittest.TestCase):
@@ -229,6 +269,38 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report["summary"]["memory_path"]["dma_activation_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["dma_weight_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["load_cycles"], 6)
+            self.assertEqual(report["summary"]["memory_path"]["max_scratchpad_depth"], 4)
+            self.assertEqual(report["summary"]["memory_path"]["activation_slots_touched"], 2)
+            self.assertEqual(report["summary"]["memory_path"]["weight_slots_touched"], 2)
+            self.assertEqual(report["summary"]["memory_path"]["peak_activation_slots_live"], 2)
+            self.assertEqual(report["summary"]["memory_path"]["peak_weight_slots_live"], 2)
+            self.assertEqual(report["summary"]["memory_path"]["working_set_utilization"], 0.5)
+            self.assertEqual(report["summary"]["memory_path"]["total_dma_bits_transferred"], 128)
+            self.assertEqual(
+                report["summary"]["memory_path"]["average_dma_bits_per_dma_cycle"],
+                16.0,
+            )
+            self.assertEqual(report["summary"]["memory_path"]["peak_dma_bits_per_cycle"], 16)
+            self.assertEqual(
+                report["summary"]["memory_path"]["effective_external_bandwidth_gb_per_s"],
+                0.64,
+            )
+            self.assertEqual(
+                report["summary"]["memory_path"]["peak_external_bandwidth_gb_per_s"],
+                2.0,
+            )
+            self.assertEqual(
+                report["summary"]["memory_path"]["theoretical_bus_bandwidth_gb_per_s"],
+                128.0,
+            )
+            self.assertEqual(
+                report["summary"]["memory_path"]["bus_bandwidth_utilization"],
+                0.005,
+            )
+            self.assertEqual(
+                report["summary"]["memory_path"]["peak_bus_bandwidth_utilization"],
+                0.015625,
+            )
             self.assertEqual(report["summary"]["compute_path"]["compute_cycles"], 4)
             self.assertEqual(report["summary"]["compute_path"]["clear_cycles"], 1)
             self.assertEqual(report["summary"]["compute_path"]["estimated_mac_operations"], 20)
@@ -285,6 +357,14 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 report_payload["cases"][2]["summary"]["compute_path"]["estimated_mac_operations"],
                 8,
+            )
+            self.assertEqual(
+                report_payload["cases"][0]["summary"]["memory_path"]["working_set_utilization"],
+                0.5,
+            )
+            self.assertEqual(
+                report_payload["cases"][1]["summary"]["memory_path"]["working_set_utilization"],
+                0.25,
             )
             self.assertEqual(
                 report_payload["cases"][0]["top_npu_throughput"]["estimated_effective_tops"],
@@ -613,6 +693,9 @@ def _make_fake_pipeline_result(
                 "memory_path": {
                     "dma_cycles": 8,
                     "load_cycles": 6,
+                    "working_set_utilization": 0.5,
+                    "total_dma_bits_transferred": 128,
+                    "peak_external_bandwidth_gb_per_s": 2.0,
                 },
                 "compute_path": {
                     "compute_cycles": 4,

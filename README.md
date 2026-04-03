@@ -9,14 +9,16 @@ Bootstrap eseguibile del progetto descritto in `progetto_npu_ai.md`: prende un r
 Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 
 - parsing euristico del requisito;
+- parsing euristico del requisito con memoria disponibile, bandwidth, area, latenza e frequenza target;
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
 - generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`;
+- `scratchpad_controller` seed con tracciamento di validita' dei banchi, coerente con il timing del path DMA/load;
 - controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute e clear finale;
 - `top_npu` parametrico su `TILE_COUNT` con wiring multi-tile seed e broadcast control-path verso piu' `tile_compute_unit`;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
-- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute e stima del throughput effettivo del `top_npu`;
+- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
 - harness locale per lint, simulazione e sintesi con fallback esplicito;
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
@@ -145,7 +147,7 @@ Comportamento:
 ## Prossimi passi consigliati
 
 1. Abilitare `iverilog` per compilazione e simulazione reali.
-2. Abilitare `verilator` e `yosys` per lint e sintesi automatici.
-3. Migliorare `scratchpad_controller` con primitive di memoria piu' realistiche.
-4. Modellare bandwidth e occupazione memoria nelle metriche.
-5. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
+2. Introdurre doppio buffering o piu' banchi nel `scratchpad_controller`.
+3. Avvicinare il path di memoria a un flow NPU reale con primitive di load/store piu' ricche.
+4. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
+5. Salvare e confrontare meglio i dataset di run per il learning loop.

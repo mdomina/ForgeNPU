@@ -11,6 +11,8 @@ class RequirementSpec:
     power_budget_watts: Optional[float] = None
     latency_budget_ms: Optional[float] = None
     area_budget_mm2: Optional[float] = None
+    available_memory_mb: Optional[float] = None
+    memory_bandwidth_gb_per_s: Optional[float] = None
     workload_type: str = "dense_gemm"
     batch_min: int = 1
     batch_max: int = 1
@@ -53,6 +55,7 @@ class GeneratedDesignBundle:
     rtl_files: List[str]
     testbench_files: List[str]
     primary_module: str
+    operand_width_bits: int = 8
     supporting_files: List[str] = field(default_factory=list)
     reference_cases_path: Optional[str] = None
     candidate_id: str = "baseline"

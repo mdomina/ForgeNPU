@@ -33,6 +33,8 @@ class RequirementParser:
         spec.area_budget_mm2 = self._extract_number(
             lower_text, NUMBER_PATTERN + r"\s*mm2\b"
         )
+        spec.available_memory_mb = self._extract_memory_mb(lower_text)
+        spec.memory_bandwidth_gb_per_s = self._extract_memory_bandwidth_gb_per_s(lower_text)
 
         workload = self._extract_workload(lower_text)
         if workload:
@@ -157,6 +159,56 @@ class RequirementParser:
             return value * 1000.0
         return value
 
+    def _extract_memory_mb(self, lower_text: str) -> Optional[float]:
+        patterns = [
+            NUMBER_PATTERN
+            + r"\s*(tb|gb|mb|kb)\b(?:\s+di)?\s*(?:memoria|sram|dram|hbm|cache|buffer)\b",
+            r"(?:memoria|sram|dram|hbm|cache|buffer)\s*(?:da|di)?\s*"
+            + NUMBER_PATTERN
+            + r"\s*(tb|gb|mb|kb)\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, lower_text)
+            if match:
+                return self._memory_unit_to_mb(
+                    value=self._to_float(match.group(1)),
+                    unit=match.group(2),
+                )
+        return None
+
+    def _extract_memory_bandwidth_gb_per_s(self, lower_text: str) -> Optional[float]:
+        match = re.search(
+            NUMBER_PATTERN + r"\s*(tb/s|gb/s|mb/s|tbps|gbps|mbps)\b",
+            lower_text,
+        )
+        if not match:
+            return None
+
+        value = self._to_float(match.group(1))
+        unit = match.group(2)
+        decimal_scale = {
+            "tb/s": 1000.0,
+            "gb/s": 1.0,
+            "mb/s": 0.001,
+        }
+        if unit in decimal_scale:
+            return round(value * decimal_scale[unit], 6)
+
+        bit_rate_scale = {
+            "tbps": 125.0,
+            "gbps": 0.125,
+            "mbps": 0.000125,
+        }
+        return round(value * bit_rate_scale[unit], 6)
+
+    def _memory_unit_to_mb(self, value: float, unit: str) -> float:
+        scale = {
+            "tb": 1024.0 * 1024.0,
+            "gb": 1024.0,
+            "mb": 1.0,
+            "kb": 1.0 / 1024.0,
+        }
+        return round(value * scale[unit], 6)
+
     def _to_float(self, token: str) -> float:
         return float(token.replace(",", "."))
-

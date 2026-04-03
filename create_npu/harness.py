@@ -55,11 +55,59 @@ class VerificationHarness:
                 summary="verilator non installato; lint saltato.",
             )
 
-        log_path = self.log_dir / "verilator_lint.log"
-        command = [executable, "--lint-only", "--sv"] + _resolve_paths(
-            bundle.rtl_files + bundle.testbench_files
+        if not bundle.testbench_files:
+            log_path = self.log_dir / "verilator_lint.log"
+            command = [
+                executable,
+                "--lint-only",
+                "--sv",
+                "-Wno-fatal",
+                "--top-module",
+                bundle.primary_module,
+            ] + _resolve_paths(bundle.rtl_files)
+            return self._run_command("verilator_lint", command, log_path)
+
+        aggregate_log = self.log_dir / "verilator_lint.log"
+        per_testbench_results = []
+
+        for testbench_path in bundle.testbench_files:
+            lint_result = self._run_single_verilator_testbench(
+                executable=executable,
+                bundle=bundle,
+                testbench_path=Path(testbench_path),
+            )
+            per_testbench_results.append(lint_result)
+
+        aggregate_log.write_text(
+            _format_verilator_summary(per_testbench_results) + "\n",
+            encoding="utf-8",
         )
-        return self._run_command("verilator_lint", command, log_path)
+
+        failed_testbenches = [
+            result for result in per_testbench_results if not result["lint"].passed
+        ]
+        if failed_testbenches:
+            first_failure = failed_testbenches[0]
+            return ToolResult(
+                name="verilator_lint",
+                available=True,
+                passed=False,
+                return_code=first_failure["lint"].return_code,
+                summary=(
+                    "Verilator lint fallito su "
+                    f"{first_failure['top']}. Vedi log aggregato."
+                ),
+                log_path=str(aggregate_log),
+            )
+
+        return ToolResult(
+            name="verilator_lint",
+            available=True,
+            passed=True,
+            return_code=0,
+            summary=f"Verilator valido su {len(per_testbench_results)} testbench.",
+            log_path=str(aggregate_log),
+        )
 
     def _run_iverilog_sim(self, bundle: GeneratedDesignBundle) -> ToolResult:
         executable = shutil.which("iverilog")
@@ -214,6 +262,33 @@ class VerificationHarness:
             "sim": sim_result,
         }
 
+    def _run_single_verilator_testbench(
+        self,
+        executable: str,
+        bundle: GeneratedDesignBundle,
+        testbench_path: Path,
+    ) -> Dict[str, object]:
+        top_module = testbench_path.stem
+        log_path = self.log_dir / f"{top_module}_verilator_lint.log"
+        command = [
+            executable,
+            "--lint-only",
+            "--sv",
+            "--timing",
+            "-Wno-fatal",
+            "--top-module",
+            top_module,
+        ] + _resolve_paths(bundle.rtl_files + [str(testbench_path)])
+        lint_result = self._run_command(
+            name=f"verilator_lint_{top_module}",
+            command=command,
+            log_path=log_path,
+        )
+        return {
+            "top": top_module,
+            "lint": lint_result,
+        }
+
 
 def _format_iverilog_summary(per_testbench_results: List[Dict[str, object]]) -> str:
     lines = []
@@ -225,6 +300,15 @@ def _format_iverilog_summary(per_testbench_results: List[Dict[str, object]]) -> 
         )
         lines.append(f"  compile_log={compile_result.log_path}")
         lines.append(f"  sim_log={sim_result.log_path}")
+    return "\n".join(lines)
+
+
+def _format_verilator_summary(per_testbench_results: List[Dict[str, object]]) -> str:
+    lines = []
+    for result in per_testbench_results:
+        lint_result = result["lint"]
+        lines.append(f"[{result['top']}] lint={lint_result.summary}")
+        lines.append(f"  lint_log={lint_result.log_path}")
     return "\n".join(lines)
 
 

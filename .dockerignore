@@ -1,0 +1,6 @@
+.git
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/output_*/
+.DS_Store

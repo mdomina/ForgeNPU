@@ -1,0 +1,11 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: forgenpu-dev:latest
+    working_dir: /workspace/ForgeNPU
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/workspace/ForgeNPU

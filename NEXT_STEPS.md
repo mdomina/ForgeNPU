@@ -78,9 +78,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 ## Operativita'
 
-- [ ] Aggiungere `Dockerfile` o ambiente container ripetibile.
-- [ ] Preparare esecuzione CI su server dedicato.
-- [ ] Aggiungere benchmark di regressione per evitare rotture del flow.
+- [x] Aggiungere `Dockerfile` o ambiente container ripetibile.
+- [x] Preparare esecuzione CI su server dedicato.
+- [x] Aggiungere benchmark di regressione per evitare rotture del flow.
 
 ## Definizione di Done per il Prossimo Milestone
 

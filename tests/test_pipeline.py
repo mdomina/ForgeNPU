@@ -5,8 +5,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from create_npu.benchmark import run_regression_benchmark
 from create_npu.harness import VerificationHarness
-from create_npu.models import GeneratedDesignBundle
+from create_npu.models import (
+    ArchitectureCandidate,
+    GeneratedDesignBundle,
+    PipelineResult,
+    RequirementSpec,
+    ToolResult,
+)
 from create_npu.pipeline import CreateNPUPipeline
 from create_npu.requirement_parser import RequirementParser
 
@@ -320,6 +327,74 @@ class PipelineTest(unittest.TestCase):
 
 
 class HarnessTest(unittest.TestCase):
+    def test_verilator_runs_each_testbench_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "candidate"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            harness = VerificationHarness(output_dir)
+            bundle = GeneratedDesignBundle(
+                rtl_files=["rtl/mac_unit.sv", "rtl/top_npu.sv"],
+                testbench_files=["tb/mac_unit_tb.sv", "tb/top_npu_tb.sv"],
+                primary_module="top_npu",
+            )
+            commands = []
+
+            def fake_run(command, cwd, capture_output, text, check):
+                commands.append((command, cwd))
+                return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+            with patch("create_npu.harness.shutil.which", return_value="/usr/bin/verilator"):
+                with patch("create_npu.harness.subprocess.run", side_effect=fake_run):
+                    result = harness._run_verilator_lint(bundle)
+
+            self.assertTrue(result.available)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.summary, "Verilator valido su 2 testbench.")
+            self.assertEqual(len(commands), 2)
+
+            lint_mac = commands[0][0]
+            lint_top = commands[1][0]
+            self.assertIn("--timing", lint_mac)
+            self.assertIn("--top-module", lint_mac)
+            self.assertIn("mac_unit_tb", lint_mac)
+            self.assertIn(str(Path("tb/mac_unit_tb.sv").resolve()), lint_mac)
+            self.assertNotIn(str(Path("tb/top_npu_tb.sv").resolve()), lint_mac)
+            self.assertIn("top_npu_tb", lint_top)
+            self.assertIn(str(Path("tb/top_npu_tb.sv").resolve()), lint_top)
+            self.assertNotIn(str(Path("tb/mac_unit_tb.sv").resolve()), lint_top)
+
+            aggregate_log = output_dir / "logs" / "verilator_lint.log"
+            self.assertTrue(aggregate_log.exists())
+            aggregate_payload = aggregate_log.read_text(encoding="utf-8")
+            self.assertIn("[mac_unit_tb]", aggregate_payload)
+            self.assertIn("[top_npu_tb]", aggregate_payload)
+
+    def test_verilator_reports_failing_testbench(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "candidate"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            harness = VerificationHarness(output_dir)
+            bundle = GeneratedDesignBundle(
+                rtl_files=["rtl/mac_unit.sv", "rtl/top_npu.sv"],
+                testbench_files=["tb/mac_unit_tb.sv", "tb/top_npu_tb.sv"],
+                primary_module="top_npu",
+            )
+
+            def fake_run(command, cwd, capture_output, text, check):
+                if "--top-module" in command and command[command.index("--top-module") + 1] == "top_npu_tb":
+                    return subprocess.CompletedProcess(command, 1, stdout="", stderr="lint error\n")
+                return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+            with patch("create_npu.harness.shutil.which", return_value="/usr/bin/verilator"):
+                with patch("create_npu.harness.subprocess.run", side_effect=fake_run):
+                    result = harness._run_verilator_lint(bundle)
+
+            self.assertTrue(result.available)
+            self.assertFalse(result.passed)
+            self.assertEqual(result.return_code, 1)
+            self.assertIn("top_npu_tb", result.summary)
+            self.assertTrue(Path(result.log_path).exists())
+
     def test_iverilog_runs_each_testbench_separately(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "candidate"
@@ -388,6 +463,174 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(result.return_code, 1)
             self.assertIn("top_npu_tb", result.summary)
             self.assertTrue(Path(result.log_path).exists())
+
+
+class BenchmarkTest(unittest.TestCase):
+    def test_regression_benchmark_passes_with_strict_toolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_run(*, requirement_text, output_dir, num_candidates, generator_backend, llm_model):
+                case_id = Path(output_dir).name
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if case_id == "llm_fallback_capture":
+                    llm_request = output_dir / "llm_request.json"
+                    llm_request.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="llm",
+                        supporting_files=[str(llm_request)],
+                        estimated_effective_tops=1.6384,
+                    )
+                return _make_fake_pipeline_result(
+                    output_dir=output_dir,
+                    requirement_text=requirement_text,
+                    candidate_id="balanced",
+                    generator_backend="heuristic",
+                    requested_backend="heuristic",
+                    supporting_files=[],
+                    estimated_effective_tops=8.192,
+                )
+
+            with patch("create_npu.benchmark.CreateNPUPipeline") as pipeline_cls:
+                pipeline_cls.return_value.run.side_effect = fake_run
+                payload = run_regression_benchmark(
+                    output_dir=temp_path / "benchmark",
+                    require_full_toolchain=True,
+                    llm_model="gpt-test",
+                )
+
+            self.assertTrue(payload["passed"])
+            self.assertEqual(len(payload["cases"]), 2)
+            self.assertTrue(Path(payload["summary_path"]).exists())
+
+    def test_regression_benchmark_reports_missing_toolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            def fake_run(*, requirement_text, output_dir, num_candidates, generator_backend, llm_model):
+                output_dir.mkdir(parents=True, exist_ok=True)
+                return _make_fake_pipeline_result(
+                    output_dir=output_dir,
+                    requirement_text=requirement_text,
+                    candidate_id="balanced",
+                    generator_backend="heuristic",
+                    requested_backend="heuristic" if generator_backend == "heuristic" else "llm",
+                    supporting_files=[],
+                    estimated_effective_tops=8.192 if generator_backend == "heuristic" else 1.6384,
+                    missing_tool_name="iverilog_sim",
+                )
+
+            with patch("create_npu.benchmark.CreateNPUPipeline") as pipeline_cls:
+                pipeline_cls.return_value.run.side_effect = fake_run
+                payload = run_regression_benchmark(
+                    output_dir=temp_path / "benchmark",
+                    require_full_toolchain=True,
+                    llm_model="gpt-test",
+                )
+
+            self.assertFalse(payload["passed"])
+            toolchain_case = next(case for case in payload["cases"] if case["case_id"] == "toolchain_transformer_smoke")
+            self.assertIn("Tool non disponibile: iverilog_sim.", toolchain_case["failures"])
+
+def _make_fake_pipeline_result(
+    output_dir: Path,
+    requirement_text: str,
+    candidate_id: str,
+    generator_backend: str,
+    requested_backend: str,
+    supporting_files: list,
+    estimated_effective_tops: float,
+    missing_tool_name: str = "",
+) -> PipelineResult:
+    architecture = ArchitectureCandidate(
+        candidate_id=candidate_id,
+        family="tiled_systolic_transformer",
+        tile_rows=32,
+        tile_cols=32,
+        tile_count=25,
+        pe_rows=160,
+        pe_cols=160,
+        pe_count=25600,
+        local_sram_kb_per_tile=512,
+        global_buffer_mb=6,
+        bus_width_bits=1024,
+        target_frequency_mhz=1000.0,
+        estimated_tops=51.2 if requested_backend == "heuristic" else 10.24,
+        estimated_power_watts=25.07,
+        estimated_area_mm2=4.72,
+    )
+    generated = GeneratedDesignBundle(
+        rtl_files=[],
+        testbench_files=[],
+        primary_module="top_npu",
+        candidate_id=candidate_id,
+        generator_backend=generator_backend,
+        supporting_files=supporting_files,
+    )
+    tool_results = []
+    for tool_name in ("python_reference", "verilator_lint", "iverilog_sim", "yosys_synth"):
+        available = tool_name != missing_tool_name
+        tool_results.append(
+            ToolResult(
+                name=tool_name,
+                available=available,
+                passed=True if available else None,
+                return_code=0 if available else None,
+                summary="OK" if available else "missing",
+            )
+        )
+
+    return PipelineResult(
+        spec=RequirementSpec(
+            original_text=requirement_text,
+            numeric_precision="INT8",
+            throughput_value=50.0 if requested_backend == "heuristic" else 10.0,
+            throughput_unit="TOPS",
+            workload_type="transformer" if requested_backend == "heuristic" else "dense_gemm",
+            batch_min=1,
+            batch_max=4 if requested_backend == "heuristic" else 1,
+            interfaces=["AXI4", "DMA", "scratchpad_sram"],
+            assumptions=["baseline"],
+            ambiguities=["power", "node", "frequency"],
+        ),
+        architecture=architecture,
+        generated=generated,
+        tool_results=tool_results,
+        score=100.0,
+        output_dir=str(output_dir),
+        report={
+            "available": True,
+            "summary": {
+                "top_level_case_count": 3,
+                "total_cycles": 25,
+                "busy_cycles": 19,
+                "done_cycles": 3,
+                "idle_cycles": 3,
+                "memory_path": {
+                    "dma_cycles": 8,
+                    "load_cycles": 6,
+                },
+                "compute_path": {
+                    "compute_cycles": 4,
+                    "clear_cycles": 1,
+                    "estimated_mac_operations": 20,
+                },
+                "top_npu_throughput": {
+                    "estimated_effective_tops": estimated_effective_tops,
+                    "theoretical_peak_tops": 51.2,
+                },
+            },
+        },
+        environment={
+            "llm": {
+                "requested_backend": requested_backend,
+            }
+        },
+    )
 
 
 if __name__ == "__main__":

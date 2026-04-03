@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke:
+    name: Docker Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Dev Container
+        run: docker compose build dev
+
+      - name: Run Unit Tests
+        run: docker compose run --rm -T dev python3 -m unittest discover -s tests
+
+      - name: Run Doctor
+        run: docker compose run --rm -T dev python3 -m create_npu.cli doctor
+
+      - name: Run Regression Benchmark
+        run: >-
+          docker compose run --rm -T dev
+          python3 -m create_npu.cli benchmark
+          --output-dir runs/output_ci_benchmark
+          --require-full-toolchain
+          --llm-model gpt-test
+
+      - name: Upload Benchmark Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-ci-benchmark
+          path: runs/output_ci_benchmark
+          if-no-files-found: error

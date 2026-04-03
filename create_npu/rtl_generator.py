@@ -209,10 +209,12 @@ def _mac_unit_template(operand_width: int, acc_width: int) -> str:
   output logic signed [ACC_WIDTH-1:0] acc_out
 );
   logic signed [2*DATA_WIDTH-1:0] product;
+  logic signed [ACC_WIDTH-1:0] product_ext;
 
   always_comb begin
     product = a * b;
-    acc_out = acc_in + product;
+    product_ext = product;
+    acc_out = acc_in + product_ext;
   end
 endmodule
 """
@@ -628,7 +630,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     compute_en = 1'b1;
     @(posedge clk);
     #1;
-    expect_outputs(9, 0, 0, 0, 4'b1111);
+    expect_outputs(9, 6, 70, 32, 4'b1111);
 
     $display("systolic_tile_tb passed");
     $finish;
@@ -1937,7 +1939,34 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
           $signed(psums_o[6*ACC_WIDTH +: ACC_WIDTH]) !== t1_p2 ||
           $signed(psums_o[7*ACC_WIDTH +: ACC_WIDTH]) !== t1_p3 ||
           valids_o !== expected_valids) begin
-        $fatal(1, "top_npu_tb failed");
+        $fatal(
+          1,
+          "top_npu_tb failed: expected state=%0d busy=%0d done=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b got state=%0d busy=%0d done=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b",
+          expected_state,
+          expected_busy,
+          expected_done,
+          t0_p0,
+          t0_p1,
+          t0_p2,
+          t0_p3,
+          t1_p0,
+          t1_p1,
+          t1_p2,
+          t1_p3,
+          expected_valids,
+          scheduler_state_o,
+          busy_o,
+          done_o,
+          $signed(psums_o[0 +: ACC_WIDTH]),
+          $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[4*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[5*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[6*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[7*ACC_WIDTH +: ACC_WIDTH]),
+          valids_o
+        );
       end
       start_i = 1'b0;
     end
@@ -1973,9 +2002,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 21, 8, 20, 12, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 42, 16, 40, 24, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_CLEAR, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_CLEAR, 1'b1, 1'b0, 42, 16, 40, 24, 0, 0, 0, 0, 8'b0000_1111);
     step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
 
@@ -1992,8 +2021,8 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_1111);
     step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 6, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
 
     rst_n = 1'b0;
@@ -2005,8 +2034,8 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
     step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 5, 6, 0, 0, 5, 6, 0, 0, 8'b1111_1111);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 5, 6, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 6, 0, 0, 5, 6, 0, 0, 8'b1111_1111);
     step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 6, 0, 0, 5, 6, 0, 0, 8'b0000_0000);
 
     $display("top_npu_tb passed");

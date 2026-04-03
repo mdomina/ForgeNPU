@@ -59,6 +59,25 @@ python3 -m pip install --upgrade pip
 python3 -m pip install openai
 ```
 
+### Docker Ubuntu del repository
+
+Se vuoi usare un ambiente Ubuntu gia' pronto e ripetibile:
+
+```bash
+git clone https://github.com/mdomina/ForgeNPU.git
+cd ForgeNPU
+docker compose build dev
+docker compose run --rm dev
+```
+
+Dentro il container:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m create_npu.cli doctor
+python3 -m create_npu.cli benchmark --require-full-toolchain
+```
+
 ## Bootstrap del Progetto
 
 ```bash
@@ -90,6 +109,7 @@ Dopo il setup, controlla:
 
 ```bash
 python3 -m create_npu.cli doctor --generator-backend llm --llm-model gpt-test
+python3 -m create_npu.cli benchmark --output-dir runs/output_regression_benchmark
 python3 -m create_npu.cli run \
   --requirement "Voglio una NPU INT8 da 50 TOPS con supporto transformer e batch 1-4." \
   --num-candidates 3

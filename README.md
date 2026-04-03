@@ -41,6 +41,28 @@ Esegui i test:
 python3 -m unittest discover -s tests
 ```
 
+Avvia l'ambiente Ubuntu Docker per sviluppo:
+
+```bash
+docker compose build dev
+docker compose run --rm dev
+```
+
+Dentro il container puoi usare gli stessi comandi del progetto:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m create_npu.cli doctor
+python3 -m create_npu.cli benchmark --require-full-toolchain
+```
+
+La repository include anche una CI GitHub Actions in `.github/workflows/ci.yml` che:
+
+- builda il container `dev`;
+- esegue test unitari e `doctor` dentro Docker;
+- lancia un benchmark di regressione end-to-end;
+- carica gli artifact della run CI.
+
 Lancia una run multi-candidato:
 
 ```bash
@@ -53,6 +75,14 @@ Diagnostica l'ambiente:
 
 ```bash
 python3 -m create_npu.cli doctor --generator-backend llm --llm-model gpt-test
+```
+
+Esegui il benchmark di regressione:
+
+```bash
+python3 -m create_npu.cli benchmark \
+  --output-dir runs/output_regression_benchmark \
+  --require-full-toolchain
 ```
 
 ## Output della Run
@@ -85,6 +115,8 @@ brew install icarus-verilog
 brew install verilator
 brew install yosys
 ```
+
+Per un ambiente Linux ripetibile e' disponibile anche il `Dockerfile` Ubuntu del repository, gia' configurato con `python3`, `iverilog`, `verilator` e `yosys`.
 
 ## Backend LLM
 

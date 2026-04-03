@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
+from create_npu.benchmark import run_regression_benchmark
 from create_npu.environment import collect_environment_snapshot
 from create_npu.pipeline import CreateNPUPipeline
 
@@ -80,10 +81,29 @@ def main() -> None:
         help="Modello da usare per la diagnosi LLM.",
     )
 
+    benchmark_parser = subparsers.add_parser(
+        "benchmark", help="Esegue benchmark di regressione del flow end-to-end."
+    )
+    benchmark_parser.add_argument(
+        "--output-dir",
+        default="runs/output_regression_benchmark",
+        help="Directory di output del benchmark di regressione.",
+    )
+    benchmark_parser.add_argument(
+        "--llm-model",
+        default="gpt-test",
+        help="Modello da usare per il caso benchmark di fallback LLM.",
+    )
+    benchmark_parser.add_argument(
+        "--require-full-toolchain",
+        action="store_true",
+        help="Fallisce se Verilator, Icarus e Yosys non sono disponibili o non passano.",
+    )
+
     args = parser.parse_args()
-    pipeline = CreateNPUPipeline()
 
     if args.command == "run":
+        pipeline = CreateNPUPipeline()
         output_dir = Path(args.output_dir) if args.output_dir else None
         result = pipeline.run(
             requirement_text=args.requirement,
@@ -96,6 +116,7 @@ def main() -> None:
         return
 
     if args.command == "plan":
+        pipeline = CreateNPUPipeline()
         result = pipeline.run(
             requirement_text=args.requirement,
             output_dir=Path("runs/plan_preview"),
@@ -117,6 +138,17 @@ def main() -> None:
                 sort_keys=True,
             )
         )
+        return
+
+    if args.command == "benchmark":
+        payload = run_regression_benchmark(
+            output_dir=Path(args.output_dir),
+            require_full_toolchain=bool(args.require_full_toolchain),
+            llm_model=args.llm_model,
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        if not payload["passed"]:
+            raise SystemExit(1)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")

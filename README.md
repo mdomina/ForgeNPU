@@ -13,7 +13,8 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
 - generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`;
-- `scratchpad_controller` seed con tracciamento di validita' dei banchi, coerente con il timing del path DMA/load;
+- `scratchpad_controller` seed con tracciamento di validita' e due banchi selezionabili, coerente con il timing del path DMA/load;
+- `tile_compute_unit` seed capace di leggere e scrivere banchi distinti dello scratchpad per esperimenti di prefetch/ping-pong locali;
 - controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute e clear finale;
 - `top_npu` parametrico su `TILE_COUNT` con wiring multi-tile seed e broadcast control-path verso piu' `tile_compute_unit`;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
@@ -23,7 +24,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici, ma non implementa ancora uno scale-out completo con partizionamento reale dei dati e interconnect dedicato.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il tile supporta un banking locale dello scratchpad, ma il control-path del `top_npu` usa ancora il banco `0` fisso e non implementa ancora uno scale-out completo con partizionamento reale dei dati e interconnect dedicato.
 
 ## Quick Start
 

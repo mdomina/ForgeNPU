@@ -111,40 +111,55 @@ def scratchpad_controller_reference(
     rows: int = 2,
     cols: int = 2,
     depth: int = 4,
+    bank_count: int = 2,
 ) -> List[Dict[str, List[int]]]:
-    activation_bank = [[0 for _ in range(rows)] for _ in range(depth)]
-    weight_bank = [[0 for _ in range(cols)] for _ in range(depth)]
-    activation_valid = [False for _ in range(depth)]
-    weight_valid = [False for _ in range(depth)]
+    activation_bank = [
+        [[0 for _ in range(rows)] for _ in range(depth)] for _ in range(bank_count)
+    ]
+    weight_bank = [
+        [[0 for _ in range(cols)] for _ in range(depth)] for _ in range(bank_count)
+    ]
+    activation_valid = [[False for _ in range(depth)] for _ in range(bank_count)]
+    weight_valid = [[False for _ in range(depth)] for _ in range(bank_count)]
     snapshots: List[Dict[str, List[int]]] = []
 
     for step in steps:
+        activation_read_bank = _sanitize_bank_index(step.get("activation_read_bank_i", 0), bank_count)
         activation_read_addr = int(step["activation_read_addr_i"])
+        weight_read_bank = _sanitize_bank_index(step.get("weight_read_bank_i", 0), bank_count)
         weight_read_addr = int(step["weight_read_addr_i"])
         snapshots.append(
             {
-                "activations_west_o": list(activation_bank[activation_read_addr]),
-                "weights_north_o": list(weight_bank[weight_read_addr]),
+                "activations_west_o": list(
+                    activation_bank[activation_read_bank][activation_read_addr]
+                ),
+                "weights_north_o": list(weight_bank[weight_read_bank][weight_read_addr]),
                 "vector_valid_o": int(
                     bool(step["load_vector_en_i"])
-                    and activation_valid[activation_read_addr]
-                    and weight_valid[weight_read_addr]
+                    and activation_valid[activation_read_bank][activation_read_addr]
+                    and weight_valid[weight_read_bank][weight_read_addr]
                 ),
             }
         )
 
         if bool(step["write_activations_en_i"]):
+            activation_write_bank = _sanitize_bank_index(
+                step.get("activation_write_bank_i", 0), bank_count
+            )
             activation_write_addr = int(step["activation_write_addr_i"])
-            activation_bank[activation_write_addr] = [
+            activation_bank[activation_write_bank][activation_write_addr] = [
                 int(value) for value in step["activations_write_data_i"]
             ]
-            activation_valid[activation_write_addr] = True
+            activation_valid[activation_write_bank][activation_write_addr] = True
         if bool(step["write_weights_en_i"]):
+            weight_write_bank = _sanitize_bank_index(
+                step.get("weight_write_bank_i", 0), bank_count
+            )
             weight_write_addr = int(step["weight_write_addr_i"])
-            weight_bank[weight_write_addr] = [
+            weight_bank[weight_write_bank][weight_write_addr] = [
                 int(value) for value in step["weights_write_data_i"]
             ]
-            weight_valid[weight_write_addr] = True
+            weight_valid[weight_write_bank][weight_write_addr] = True
 
     return snapshots
 
@@ -188,11 +203,16 @@ def tile_compute_unit_reference(
     rows: int = 2,
     cols: int = 2,
     depth: int = 4,
+    bank_count: int = 2,
 ) -> List[Dict[str, List[int]]]:
-    activation_bank = [[0 for _ in range(rows)] for _ in range(depth)]
-    weight_bank = [[0 for _ in range(cols)] for _ in range(depth)]
-    activation_valid = [False for _ in range(depth)]
-    weight_valid = [False for _ in range(depth)]
+    activation_bank = [
+        [[0 for _ in range(rows)] for _ in range(depth)] for _ in range(bank_count)
+    ]
+    weight_bank = [
+        [[0 for _ in range(cols)] for _ in range(depth)] for _ in range(bank_count)
+    ]
+    activation_valid = [[False for _ in range(depth)] for _ in range(bank_count)]
+    weight_valid = [[False for _ in range(depth)] for _ in range(bank_count)]
     activation_regs = [[0 for _ in range(cols)] for _ in range(rows)]
     weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
     psum_regs = [[0 for _ in range(cols)] for _ in range(rows)]
@@ -201,16 +221,21 @@ def tile_compute_unit_reference(
     pending_dma_valid = False
     pending_dma_write_weights = False
     pending_dma_addr = 0
+    pending_dma_bank = 0
     pending_dma_payload = [0 for _ in range(max(rows, cols))]
 
     for step in steps:
+        activation_read_bank = _sanitize_bank_index(step.get("activation_read_bank_i", 0), bank_count)
         activation_read_addr = int(step["activation_read_addr_i"])
+        weight_read_bank = _sanitize_bank_index(step.get("weight_read_bank_i", 0), bank_count)
         weight_read_addr = int(step["weight_read_addr_i"])
-        activations_west = list(activation_bank[activation_read_addr])
-        weights_north = list(weight_bank[weight_read_addr])
-        scratchpad_vector_valid = bool(step["load_vector_en_i"]) and activation_valid[
-            activation_read_addr
-        ] and weight_valid[weight_read_addr]
+        activations_west = list(activation_bank[activation_read_bank][activation_read_addr])
+        weights_north = list(weight_bank[weight_read_bank][weight_read_addr])
+        scratchpad_vector_valid = (
+            bool(step["load_vector_en_i"])
+            and activation_valid[activation_read_bank][activation_read_addr]
+            and weight_valid[weight_read_bank][weight_read_addr]
+        )
         compute_en = bool(step["compute_en_i"])
         clear_acc = bool(step["clear_acc_i"])
 
@@ -264,23 +289,34 @@ def tile_compute_unit_reference(
 
         if pending_dma_valid:
             if pending_dma_write_weights:
-                weight_bank[pending_dma_addr] = [int(value) for value in pending_dma_payload[:cols]]
-                weight_valid[pending_dma_addr] = True
+                weight_bank[pending_dma_bank][pending_dma_addr] = [
+                    int(value) for value in pending_dma_payload[:cols]
+                ]
+                weight_valid[pending_dma_bank][pending_dma_addr] = True
             else:
-                activation_bank[pending_dma_addr] = [
+                activation_bank[pending_dma_bank][pending_dma_addr] = [
                     int(value) for value in pending_dma_payload[:rows]
                 ]
-                activation_valid[pending_dma_addr] = True
+                activation_valid[pending_dma_bank][pending_dma_addr] = True
 
         if bool(step["dma_valid_i"]):
             pending_dma_valid = True
             pending_dma_write_weights = bool(step["dma_write_weights_i"])
             pending_dma_addr = int(step["dma_addr_i"])
+            if pending_dma_write_weights:
+                pending_dma_bank = _sanitize_bank_index(
+                    step.get("weight_write_bank_i", 0), bank_count
+                )
+            else:
+                pending_dma_bank = _sanitize_bank_index(
+                    step.get("activation_write_bank_i", 0), bank_count
+                )
             pending_dma_payload = [int(value) for value in step["dma_payload_i"]]
         else:
             pending_dma_valid = False
             pending_dma_write_weights = False
             pending_dma_addr = 0
+            pending_dma_bank = 0
             pending_dma_payload = [0 for _ in range(max(rows, cols))]
 
     return snapshots
@@ -362,8 +398,12 @@ def top_npu_reference(
                     "dma_write_weights_i": scheduler_snapshot["dma_write_weights_o"],
                     "dma_addr_i": scheduler_snapshot["dma_addr_o"],
                     "dma_payload_i": scheduler_snapshot["dma_payload_o"],
+                    "activation_write_bank_i": 0,
+                    "weight_write_bank_i": 0,
                     "load_vector_en_i": scheduler_snapshot["load_vector_en_o"] if tile_enabled else 0,
+                    "activation_read_bank_i": 0,
                     "activation_read_addr_i": scheduler_snapshot["activation_read_addr_o"],
+                    "weight_read_bank_i": 0,
                     "weight_read_addr_i": scheduler_snapshot["weight_read_addr_o"],
                     "compute_en_i": scheduler_snapshot["compute_en_o"] if tile_enabled else 0,
                     "clear_acc_i": scheduler_snapshot["clear_acc_o"] if tile_enabled else 0,
@@ -917,6 +957,12 @@ def _sanitize_load_iterations(raw_value: object) -> int:
     if value <= 0:
         return 1
     return min(2, value)
+
+
+def _sanitize_bank_index(raw_value: object, bank_count: int) -> int:
+    if bank_count <= 1:
+        return 0
+    return int(raw_value) % bank_count
 
 
 def _select_activation_slot(step: Dict[str, object], slot_index: int, width: int) -> List[int]:

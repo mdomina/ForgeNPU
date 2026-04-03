@@ -646,55 +646,64 @@ def _scratchpad_controller_template(operand_width: int) -> str:
   parameter int ROWS = 2,
   parameter int COLS = 2,
   parameter int DEPTH = 4,
-  parameter int ADDR_WIDTH = $clog2(DEPTH)
+  parameter int BANK_COUNT = 2,
+  parameter int ADDR_WIDTH = $clog2(DEPTH),
+  parameter int BANK_SEL_WIDTH = (BANK_COUNT > 1) ? $clog2(BANK_COUNT) : 1
 ) (
   input  logic clk,
   input  logic rst_n,
   input  logic write_activations_en_i,
+  input  logic [BANK_SEL_WIDTH-1:0] activation_write_bank_i,
   input  logic [ADDR_WIDTH-1:0] activation_write_addr_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activations_write_data_i,
   input  logic write_weights_en_i,
+  input  logic [BANK_SEL_WIDTH-1:0] weight_write_bank_i,
   input  logic [ADDR_WIDTH-1:0] weight_write_addr_i,
   input  logic signed [COLS*DATA_WIDTH-1:0] weights_write_data_i,
   input  logic load_vector_en_i,
+  input  logic [BANK_SEL_WIDTH-1:0] activation_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] activation_read_addr_i,
+  input  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] weight_read_addr_i,
   output logic signed [ROWS*DATA_WIDTH-1:0] activations_west_o,
   output logic signed [COLS*DATA_WIDTH-1:0] weights_north_o,
   output logic vector_valid_o
 );
-  logic signed [ROWS*DATA_WIDTH-1:0] activation_bank [0:DEPTH-1];
-  logic signed [COLS*DATA_WIDTH-1:0] weight_bank [0:DEPTH-1];
-  logic activation_valid_bank [0:DEPTH-1];
-  logic weight_valid_bank [0:DEPTH-1];
+  logic signed [ROWS*DATA_WIDTH-1:0] activation_bank [0:BANK_COUNT-1][0:DEPTH-1];
+  logic signed [COLS*DATA_WIDTH-1:0] weight_bank [0:BANK_COUNT-1][0:DEPTH-1];
+  logic activation_valid_bank [0:BANK_COUNT-1][0:DEPTH-1];
+  logic weight_valid_bank [0:BANK_COUNT-1][0:DEPTH-1];
+  integer bank_sel_idx;
   integer bank_idx;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      for (bank_idx = 0; bank_idx < DEPTH; bank_idx = bank_idx + 1) begin
-        activation_bank[bank_idx] <= '0;
-        weight_bank[bank_idx] <= '0;
-        activation_valid_bank[bank_idx] <= 1'b0;
-        weight_valid_bank[bank_idx] <= 1'b0;
+      for (bank_sel_idx = 0; bank_sel_idx < BANK_COUNT; bank_sel_idx = bank_sel_idx + 1) begin
+        for (bank_idx = 0; bank_idx < DEPTH; bank_idx = bank_idx + 1) begin
+          activation_bank[bank_sel_idx][bank_idx] <= '0;
+          weight_bank[bank_sel_idx][bank_idx] <= '0;
+          activation_valid_bank[bank_sel_idx][bank_idx] <= 1'b0;
+          weight_valid_bank[bank_sel_idx][bank_idx] <= 1'b0;
+        end
       end
     end else begin
       if (write_activations_en_i) begin
-        activation_bank[activation_write_addr_i] <= activations_write_data_i;
-        activation_valid_bank[activation_write_addr_i] <= 1'b1;
+        activation_bank[activation_write_bank_i][activation_write_addr_i] <= activations_write_data_i;
+        activation_valid_bank[activation_write_bank_i][activation_write_addr_i] <= 1'b1;
       end
       if (write_weights_en_i) begin
-        weight_bank[weight_write_addr_i] <= weights_write_data_i;
-        weight_valid_bank[weight_write_addr_i] <= 1'b1;
+        weight_bank[weight_write_bank_i][weight_write_addr_i] <= weights_write_data_i;
+        weight_valid_bank[weight_write_bank_i][weight_write_addr_i] <= 1'b1;
       end
     end
   end
 
   always_comb begin
-    activations_west_o = activation_bank[activation_read_addr_i];
-    weights_north_o = weight_bank[weight_read_addr_i];
+    activations_west_o = activation_bank[activation_read_bank_i][activation_read_addr_i];
+    weights_north_o = weight_bank[weight_read_bank_i][weight_read_addr_i];
     vector_valid_o = load_vector_en_i &&
-      activation_valid_bank[activation_read_addr_i] &&
-      weight_valid_bank[weight_read_addr_i];
+      activation_valid_bank[activation_read_bank_i][activation_read_addr_i] &&
+      weight_valid_bank[weight_read_bank_i][weight_read_addr_i];
   end
 endmodule
 """
@@ -914,18 +923,24 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
   localparam int ROWS = 2;
   localparam int COLS = 2;
   localparam int DEPTH = 4;
+  localparam int BANK_COUNT = 2;
   localparam int ADDR_WIDTH = $clog2(DEPTH);
+  localparam int BANK_SEL_WIDTH = (BANK_COUNT > 1) ? $clog2(BANK_COUNT) : 1;
 
   logic clk;
   logic rst_n;
   logic write_activations_en_i;
+  logic [BANK_SEL_WIDTH-1:0] activation_write_bank_i;
   logic [ADDR_WIDTH-1:0] activation_write_addr_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activations_write_data_i;
   logic write_weights_en_i;
+  logic [BANK_SEL_WIDTH-1:0] weight_write_bank_i;
   logic [ADDR_WIDTH-1:0] weight_write_addr_i;
   logic signed [COLS*DATA_WIDTH-1:0] weights_write_data_i;
   logic load_vector_en_i;
+  logic [BANK_SEL_WIDTH-1:0] activation_read_bank_i;
   logic [ADDR_WIDTH-1:0] activation_read_addr_i;
+  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i;
   logic [ADDR_WIDTH-1:0] weight_read_addr_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activations_west_o;
   logic signed [COLS*DATA_WIDTH-1:0] weights_north_o;
@@ -935,18 +950,23 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
     .DATA_WIDTH(DATA_WIDTH),
     .ROWS(ROWS),
     .COLS(COLS),
-    .DEPTH(DEPTH)
+    .DEPTH(DEPTH),
+    .BANK_COUNT(BANK_COUNT)
   ) dut (
     .clk(clk),
     .rst_n(rst_n),
     .write_activations_en_i(write_activations_en_i),
+    .activation_write_bank_i(activation_write_bank_i),
     .activation_write_addr_i(activation_write_addr_i),
     .activations_write_data_i(activations_write_data_i),
     .write_weights_en_i(write_weights_en_i),
+    .weight_write_bank_i(weight_write_bank_i),
     .weight_write_addr_i(weight_write_addr_i),
     .weights_write_data_i(weights_write_data_i),
     .load_vector_en_i(load_vector_en_i),
+    .activation_read_bank_i(activation_read_bank_i),
     .activation_read_addr_i(activation_read_addr_i),
+    .weight_read_bank_i(weight_read_bank_i),
     .weight_read_addr_i(weight_read_addr_i),
     .activations_west_o(activations_west_o),
     .weights_north_o(weights_north_o),
@@ -960,18 +980,24 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
       write_activations_en_i = 1'b0;
       write_weights_en_i = 1'b0;
       load_vector_en_i = 1'b0;
+      activation_write_bank_i = '0;
+      weight_write_bank_i = '0;
+      activation_read_bank_i = '0;
+      weight_read_bank_i = '0;
       activations_write_data_i = '0;
       weights_write_data_i = '0;
     end
   endtask
 
   task automatic write_activation_vector(
+    input integer bank,
     input integer addr,
     input integer row0,
     input integer row1
   );
     begin
       idle_controls();
+      activation_write_bank_i = bank[BANK_SEL_WIDTH-1:0];
       activation_write_addr_i = addr[ADDR_WIDTH-1:0];
       activations_write_data_i[0 +: DATA_WIDTH] = row0;
       activations_write_data_i[DATA_WIDTH +: DATA_WIDTH] = row1;
@@ -982,12 +1008,14 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
   endtask
 
   task automatic write_weight_vector(
+    input integer bank,
     input integer addr,
     input integer col0,
     input integer col1
   );
     begin
       idle_controls();
+      weight_write_bank_i = bank[BANK_SEL_WIDTH-1:0];
       weight_write_addr_i = addr[ADDR_WIDTH-1:0];
       weights_write_data_i[0 +: DATA_WIDTH] = col0;
       weights_write_data_i[DATA_WIDTH +: DATA_WIDTH] = col1;
@@ -998,7 +1026,9 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
   endtask
 
   task automatic load_and_expect(
+    input integer act_bank,
     input integer act_addr,
+    input integer weight_bank,
     input integer weight_addr,
     input integer act0,
     input integer act1,
@@ -1009,7 +1039,9 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
   );
     begin
       idle_controls();
+      activation_read_bank_i = act_bank[BANK_SEL_WIDTH-1:0];
       activation_read_addr_i = act_addr[ADDR_WIDTH-1:0];
+      weight_read_bank_i = weight_bank[BANK_SEL_WIDTH-1:0];
       weight_read_addr_i = weight_addr[ADDR_WIDTH-1:0];
       load_vector_en_i = request_load;
       @(posedge clk);
@@ -1033,15 +1065,15 @@ def _scratchpad_controller_tb_template(operand_width: int) -> str:
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
-    write_activation_vector(0, 1, 2);
-    write_weight_vector(0, 5, 6);
-    write_activation_vector(1, 3, 4);
-    write_weight_vector(1, 7, 8);
+    write_activation_vector(0, 0, 1, 2);
+    write_weight_vector(0, 0, 5, 6);
+    write_activation_vector(1, 0, 9, 10);
+    write_weight_vector(1, 0, 11, 12);
 
-    load_and_expect(0, 0, 1, 2, 5, 6, 1'b1, 1'b1);
-    load_and_expect(1, 1, 3, 4, 7, 8, 1'b1, 1'b1);
-    load_and_expect(1, 1, 3, 4, 7, 8, 1'b0, 1'b0);
-    load_and_expect(3, 3, 0, 0, 0, 0, 1'b1, 1'b0);
+    load_and_expect(0, 0, 0, 0, 1, 2, 5, 6, 1'b1, 1'b1);
+    load_and_expect(1, 0, 1, 0, 9, 10, 11, 12, 1'b1, 1'b1);
+    load_and_expect(1, 0, 1, 0, 9, 10, 11, 12, 1'b0, 1'b0);
+    load_and_expect(1, 1, 1, 1, 0, 0, 0, 0, 1'b1, 1'b0);
 
     $display("scratchpad_controller_tb passed");
     $finish;
@@ -1057,7 +1089,9 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
   parameter int ROWS = 2,
   parameter int COLS = 2,
   parameter int DEPTH = 4,
+  parameter int BANK_COUNT = 2,
   parameter int ADDR_WIDTH = $clog2(DEPTH),
+  parameter int BANK_SEL_WIDTH = (BANK_COUNT > 1) ? $clog2(BANK_COUNT) : 1,
   parameter int MAX_DIM = (ROWS > COLS) ? ROWS : COLS
 ) (
   input  logic clk,
@@ -1066,8 +1100,12 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
   input  logic dma_write_weights_i,
   input  logic [ADDR_WIDTH-1:0] dma_addr_i,
   input  logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i,
+  input  logic [BANK_SEL_WIDTH-1:0] activation_write_bank_i,
+  input  logic [BANK_SEL_WIDTH-1:0] weight_write_bank_i,
   input  logic load_vector_en_i,
+  input  logic [BANK_SEL_WIDTH-1:0] activation_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] activation_read_addr_i,
+  input  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] weight_read_addr_i,
   input  logic compute_en_i,
   input  logic clear_acc_i,
@@ -1085,6 +1123,8 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
   logic write_weights_en;
   logic [ADDR_WIDTH-1:0] weight_write_addr;
   logic signed [COLS*DATA_WIDTH-1:0] weights_write_data;
+  logic [BANK_SEL_WIDTH-1:0] activation_write_bank_q;
+  logic [BANK_SEL_WIDTH-1:0] weight_write_bank_q;
 
   dma_engine #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -1108,22 +1148,37 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
     .dma_busy_o(dma_busy_o)
   );
 
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      activation_write_bank_q <= '0;
+      weight_write_bank_q <= '0;
+    end else if (dma_valid_i) begin
+      activation_write_bank_q <= activation_write_bank_i;
+      weight_write_bank_q <= weight_write_bank_i;
+    end
+  end
+
   scratchpad_controller #(
     .DATA_WIDTH(DATA_WIDTH),
     .ROWS(ROWS),
     .COLS(COLS),
-    .DEPTH(DEPTH)
+    .DEPTH(DEPTH),
+    .BANK_COUNT(BANK_COUNT)
   ) scratchpad_inst (
     .clk(clk),
     .rst_n(rst_n),
     .write_activations_en_i(write_activations_en),
+    .activation_write_bank_i(activation_write_bank_q),
     .activation_write_addr_i(activation_write_addr),
     .activations_write_data_i(activations_write_data),
     .write_weights_en_i(write_weights_en),
+    .weight_write_bank_i(weight_write_bank_q),
     .weight_write_addr_i(weight_write_addr),
     .weights_write_data_i(weights_write_data),
     .load_vector_en_i(load_vector_en_i),
+    .activation_read_bank_i(activation_read_bank_i),
     .activation_read_addr_i(activation_read_addr_i),
+    .weight_read_bank_i(weight_read_bank_i),
     .weight_read_addr_i(weight_read_addr_i),
     .activations_west_o(activations_west),
     .weights_north_o(weights_north),
@@ -1157,7 +1212,9 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   localparam int ROWS = 2;
   localparam int COLS = 2;
   localparam int DEPTH = 4;
+  localparam int BANK_COUNT = 2;
   localparam int ADDR_WIDTH = $clog2(DEPTH);
+  localparam int BANK_SEL_WIDTH = (BANK_COUNT > 1) ? $clog2(BANK_COUNT) : 1;
   localparam int MAX_DIM = (ROWS > COLS) ? ROWS : COLS;
   localparam int PE_COUNT = ROWS * COLS;
 
@@ -1167,8 +1224,12 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   logic dma_write_weights_i;
   logic [ADDR_WIDTH-1:0] dma_addr_i;
   logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i;
+  logic [BANK_SEL_WIDTH-1:0] activation_write_bank_i;
+  logic [BANK_SEL_WIDTH-1:0] weight_write_bank_i;
   logic load_vector_en_i;
+  logic [BANK_SEL_WIDTH-1:0] activation_read_bank_i;
   logic [ADDR_WIDTH-1:0] activation_read_addr_i;
+  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i;
   logic [ADDR_WIDTH-1:0] weight_read_addr_i;
   logic compute_en_i;
   logic clear_acc_i;
@@ -1183,7 +1244,8 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     .ACC_WIDTH(ACC_WIDTH),
     .ROWS(ROWS),
     .COLS(COLS),
-    .DEPTH(DEPTH)
+    .DEPTH(DEPTH),
+    .BANK_COUNT(BANK_COUNT)
   ) dut (
     .clk(clk),
     .rst_n(rst_n),
@@ -1191,8 +1253,12 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     .dma_write_weights_i(dma_write_weights_i),
     .dma_addr_i(dma_addr_i),
     .dma_payload_i(dma_payload_i),
+    .activation_write_bank_i(activation_write_bank_i),
+    .weight_write_bank_i(weight_write_bank_i),
     .load_vector_en_i(load_vector_en_i),
+    .activation_read_bank_i(activation_read_bank_i),
     .activation_read_addr_i(activation_read_addr_i),
+    .weight_read_bank_i(weight_read_bank_i),
     .weight_read_addr_i(weight_read_addr_i),
     .compute_en_i(compute_en_i),
     .clear_acc_i(clear_acc_i),
@@ -1211,13 +1277,18 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
       dma_write_weights_i = 1'b0;
       dma_addr_i = '0;
       dma_payload_i = '0;
+      activation_write_bank_i = '0;
+      weight_write_bank_i = '0;
       load_vector_en_i = 1'b0;
+      activation_read_bank_i = '0;
+      weight_read_bank_i = '0;
       compute_en_i = 1'b0;
       clear_acc_i = 1'b0;
     end
   endtask
 
   task automatic dma_activation_vector(
+    input integer bank,
     input integer addr,
     input integer row0,
     input integer row1
@@ -1226,6 +1297,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
       idle_controls();
       dma_valid_i = 1'b1;
       dma_write_weights_i = 1'b0;
+      activation_write_bank_i = bank[BANK_SEL_WIDTH-1:0];
       dma_addr_i = addr[ADDR_WIDTH-1:0];
       dma_payload_i[0 +: DATA_WIDTH] = row0;
       dma_payload_i[DATA_WIDTH +: DATA_WIDTH] = row1;
@@ -1235,6 +1307,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   endtask
 
   task automatic dma_weight_vector(
+    input integer bank,
     input integer addr,
     input integer col0,
     input integer col1
@@ -1243,6 +1316,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
       idle_controls();
       dma_valid_i = 1'b1;
       dma_write_weights_i = 1'b1;
+      weight_write_bank_i = bank[BANK_SEL_WIDTH-1:0];
       dma_addr_i = addr[ADDR_WIDTH-1:0];
       dma_payload_i[0 +: DATA_WIDTH] = col0;
       dma_payload_i[DATA_WIDTH +: DATA_WIDTH] = col1;
@@ -1252,12 +1326,16 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   endtask
 
   task automatic load_tile_vectors(
+    input integer act_bank,
     input integer act_addr,
+    input integer weight_bank,
     input integer weight_addr
   );
     begin
       idle_controls();
+      activation_read_bank_i = act_bank[BANK_SEL_WIDTH-1:0];
       activation_read_addr_i = act_addr[ADDR_WIDTH-1:0];
+      weight_read_bank_i = weight_bank[BANK_SEL_WIDTH-1:0];
       weight_read_addr_i = weight_addr[ADDR_WIDTH-1:0];
       load_vector_en_i = 1'b1;
       @(posedge clk);
@@ -1312,30 +1390,30 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
-    dma_activation_vector(0, 1, 2);
+    dma_activation_vector(0, 0, 1, 2);
     idle_controls();
     @(posedge clk);
     #1;
 
-    dma_weight_vector(0, 5, 6);
+    dma_weight_vector(0, 0, 5, 6);
     idle_controls();
     @(posedge clk);
     #1;
 
-    dma_activation_vector(1, 3, 4);
-    idle_controls();
-    @(posedge clk);
-    #1;
-
-    dma_weight_vector(1, 7, 8);
-    idle_controls();
-    @(posedge clk);
-    #1;
-
-    load_tile_vectors(0, 0);
+    load_tile_vectors(0, 0, 0, 0);
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b1);
 
-    load_tile_vectors(1, 1);
+    dma_activation_vector(1, 0, 3, 4);
+    idle_controls();
+    @(posedge clk);
+    #1;
+
+    dma_weight_vector(1, 0, 7, 8);
+    idle_controls();
+    @(posedge clk);
+    #1;
+
+    load_tile_vectors(1, 0, 1, 0);
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b1);
 
     compute_step();
@@ -1837,8 +1915,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
         .dma_write_weights_i(dma_write_weights),
         .dma_addr_i(dma_addr),
         .dma_payload_i(dma_payload),
+        .activation_write_bank_i('0),
+        .weight_write_bank_i('0),
         .load_vector_en_i(load_vector_en && tile_enable_i[tile_idx]),
+        .activation_read_bank_i('0),
         .activation_read_addr_i(activation_read_addr),
+        .weight_read_bank_i('0),
         .weight_read_addr_i(weight_read_addr),
         .compute_en_i(compute_en && tile_enable_i[tile_idx]),
         .clear_acc_i(clear_acc && tile_enable_i[tile_idx]),
@@ -2817,13 +2899,17 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                 "steps": [
                     {
                         "write_activations_en_i": 1,
+                        "activation_write_bank_i": 0,
                         "activation_write_addr_i": 0,
                         "activations_write_data_i": [1, 2],
                         "write_weights_en_i": 0,
+                        "weight_write_bank_i": 0,
                         "weight_write_addr_i": 0,
                         "weights_write_data_i": [0, 0],
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "expected": {
                             "activations_west_o": [0, 0],
@@ -2833,13 +2919,17 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                     },
                     {
                         "write_activations_en_i": 0,
+                        "activation_write_bank_i": 0,
                         "activation_write_addr_i": 0,
                         "activations_write_data_i": [0, 0],
                         "write_weights_en_i": 1,
+                        "weight_write_bank_i": 0,
                         "weight_write_addr_i": 0,
                         "weights_write_data_i": [5, 6],
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "expected": {
                             "activations_west_o": [1, 2],
@@ -2849,13 +2939,17 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                     },
                     {
                         "write_activations_en_i": 1,
-                        "activation_write_addr_i": 1,
-                        "activations_write_data_i": [3, 4],
+                        "activation_write_bank_i": 1,
+                        "activation_write_addr_i": 0,
+                        "activations_write_data_i": [9, 10],
                         "write_weights_en_i": 1,
-                        "weight_write_addr_i": 1,
-                        "weights_write_data_i": [7, 8],
+                        "weight_write_bank_i": 1,
+                        "weight_write_addr_i": 0,
+                        "weights_write_data_i": [11, 12],
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "expected": {
                             "activations_west_o": [1, 2],
@@ -2865,30 +2959,58 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                     },
                     {
                         "write_activations_en_i": 0,
+                        "activation_write_bank_i": 0,
                         "activation_write_addr_i": 0,
                         "activations_write_data_i": [0, 0],
                         "write_weights_en_i": 0,
+                        "weight_write_bank_i": 0,
                         "weight_write_addr_i": 0,
                         "weights_write_data_i": [0, 0],
                         "load_vector_en_i": 1,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 0,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
+                        "weight_read_addr_i": 0,
                         "expected": {
-                            "activations_west_o": [3, 4],
-                            "weights_north_o": [7, 8],
+                            "activations_west_o": [1, 2],
+                            "weights_north_o": [5, 6],
                             "vector_valid_o": 1,
                         },
                     },
                     {
                         "write_activations_en_i": 0,
+                        "activation_write_bank_i": 0,
                         "activation_write_addr_i": 0,
                         "activations_write_data_i": [0, 0],
                         "write_weights_en_i": 0,
+                        "weight_write_bank_i": 0,
                         "weight_write_addr_i": 0,
                         "weights_write_data_i": [0, 0],
                         "load_vector_en_i": 1,
-                        "activation_read_addr_i": 3,
-                        "weight_read_addr_i": 3,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 0,
+                        "expected": {
+                            "activations_west_o": [9, 10],
+                            "weights_north_o": [11, 12],
+                            "vector_valid_o": 1,
+                        },
+                    },
+                    {
+                        "write_activations_en_i": 0,
+                        "activation_write_bank_i": 0,
+                        "activation_write_addr_i": 0,
+                        "activations_write_data_i": [0, 0],
+                        "write_weights_en_i": 0,
+                        "weight_write_bank_i": 0,
+                        "weight_write_addr_i": 0,
+                        "weights_write_data_i": [0, 0],
+                        "load_vector_en_i": 1,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 1,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 1,
                         "expected": {
                             "activations_west_o": [0, 0],
                             "weights_north_o": [0, 0],
@@ -2900,7 +3022,7 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
         ],
         "tile_compute_unit": [
             {
-                "name": "dma_feeds_scratchpad_then_compute",
+                "name": "dma_feeds_banked_scratchpad_then_compute",
                 "rows": 2,
                 "cols": 2,
                 "depth": 4,
@@ -2910,8 +3032,12 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [1, 2],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -2926,8 +3052,12 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -2942,8 +3072,12 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 1,
                         "dma_addr_i": 0,
                         "dma_payload_i": [5, 6],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -2958,8 +3092,12 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -2970,12 +3108,16 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         },
                     },
                     {
-                        "dma_valid_i": 1,
+                        "dma_valid_i": 0,
                         "dma_write_weights_i": 0,
-                        "dma_addr_i": 1,
-                        "dma_payload_i": [3, 4],
+                        "dma_addr_i": 0,
+                        "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 1,
+                        "activation_read_bank_i": 0,
                         "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -2986,12 +3128,36 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         },
                     },
                     {
+                        "dma_valid_i": 1,
+                        "dma_write_weights_i": 0,
+                        "dma_addr_i": 0,
+                        "dma_payload_i": [3, 4],
+                        "activation_write_bank_i": 1,
+                        "weight_write_bank_i": 0,
+                        "load_vector_en_i": 0,
+                        "activation_read_bank_i": 0,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
+                        "weight_read_addr_i": 0,
+                        "compute_en_i": 0,
+                        "clear_acc_i": 0,
+                        "expected": {
+                            "psums_o": [0, 0, 0, 0],
+                            "valids_o": [0, 0, 0, 0],
+                            "scratchpad_vector_valid_o": 0,
+                        },
+                    },
+                    {
                         "dma_valid_i": 0,
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
+                        "activation_read_bank_i": 0,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -3004,10 +3170,14 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                     {
                         "dma_valid_i": 1,
                         "dma_write_weights_i": 1,
-                        "dma_addr_i": 1,
+                        "dma_addr_i": 0,
                         "dma_payload_i": [7, 8],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 1,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
+                        "activation_read_bank_i": 0,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
                         "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
@@ -3022,9 +3192,13 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 0,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 0,
+                        "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
                         "expected": {
@@ -3038,9 +3212,13 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 1,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 0,
                         "expected": {
@@ -3054,9 +3232,33 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "compute_en_i": 0,
+                        "clear_acc_i": 0,
+                        "expected": {
+                            "psums_o": [0, 0, 0, 0],
+                            "valids_o": [0, 0, 0, 0],
+                            "scratchpad_vector_valid_o": 0,
+                        },
+                    },
+                    {
+                        "dma_valid_i": 0,
+                        "dma_write_weights_i": 0,
+                        "dma_addr_i": 0,
+                        "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
+                        "load_vector_en_i": 0,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 0,
                         "compute_en_i": 1,
                         "clear_acc_i": 0,
                         "expected": {
@@ -3070,9 +3272,13 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 0,
                         "compute_en_i": 1,
                         "clear_acc_i": 0,
                         "expected": {
@@ -3086,9 +3292,13 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                         "dma_write_weights_i": 0,
                         "dma_addr_i": 0,
                         "dma_payload_i": [0, 0],
+                        "activation_write_bank_i": 0,
+                        "weight_write_bank_i": 0,
                         "load_vector_en_i": 0,
-                        "activation_read_addr_i": 1,
-                        "weight_read_addr_i": 1,
+                        "activation_read_bank_i": 1,
+                        "activation_read_addr_i": 0,
+                        "weight_read_bank_i": 1,
+                        "weight_read_addr_i": 0,
                         "compute_en_i": 0,
                         "clear_acc_i": 1,
                         "expected": {

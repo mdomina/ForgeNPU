@@ -184,9 +184,27 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "rtl"
+                    / "cluster_control.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "rtl"
                     / "top_npu.sv"
                 ).exists()
             )
+            cluster_control_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "cluster_control.sv"
+            ).read_text(encoding="utf-8")
+            self.assertIn("module cluster_control", cluster_control_rtl)
+            self.assertIn("cluster_control #(", top_npu_rtl)
             self.assertTrue(
                 (
                     Path(result.output_dir)
@@ -221,6 +239,15 @@ class PipelineTest(unittest.TestCase):
                     / "balanced"
                     / "tb"
                     / "scheduler_tb.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "tb"
+                    / "cluster_control_tb.sv"
                 ).exists()
             )
             self.assertTrue(
@@ -302,6 +329,21 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report["summary"]["busy_cycles"], 28)
             self.assertEqual(report["summary"]["done_cycles"], 3)
             self.assertEqual(report["summary"]["idle_cycles"], 3)
+            self.assertEqual(report["summary"]["control_path"]["dma_broadcast_cycles"], 8)
+            self.assertEqual(report["summary"]["control_path"]["load_broadcast_cycles"], 6)
+            self.assertEqual(report["summary"]["control_path"]["compute_broadcast_cycles"], 4)
+            self.assertEqual(report["summary"]["control_path"]["flush_broadcast_cycles"], 3)
+            self.assertEqual(report["summary"]["control_path"]["clear_broadcast_cycles"], 1)
+            self.assertEqual(report["summary"]["control_path"]["store_broadcast_cycles"], 6)
+            self.assertEqual(report["summary"]["control_path"]["peak_active_tiles"], 2)
+            self.assertEqual(
+                report["summary"]["control_path"]["average_active_tiles_per_active_cycle"],
+                1.285714,
+            )
+            self.assertEqual(
+                report["summary"]["control_path"]["average_active_tiles_per_compute_cycle"],
+                1.25,
+            )
             self.assertEqual(report["summary"]["memory_path"]["dma_cycles"], 8)
             self.assertEqual(report["summary"]["memory_path"]["dma_activation_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["dma_weight_cycles"], 4)
@@ -397,6 +439,16 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report_payload["cases"][1]["program"]["clear_on_done_i"], 0)
             self.assertEqual(report_payload["cases"][2]["tile_count"], 2)
             self.assertEqual(report_payload["cases"][2]["program"]["tile_enable_i"], [1, 1])
+            self.assertEqual(report_payload["cases"][0]["trace"][0]["control_path"]["tile_dma_valid"], [1])
+            self.assertEqual(report_payload["cases"][0]["trace"][2]["control_path"]["dma_bank"], 1)
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][4]["control_path"]["tile_load_vector_en"],
+                [1],
+            )
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][8]["control_path"]["tile_store_results_en"],
+                [1],
+            )
             self.assertEqual(report_payload["cases"][0]["trace"][0]["memory_path"]["dma_bank"], 0)
             self.assertEqual(report_payload["cases"][0]["trace"][2]["memory_path"]["dma_bank"], 1)
             self.assertEqual(
@@ -430,6 +482,10 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 report_payload["cases"][2]["top_npu_throughput"]["seed_peak_macs_per_cycle"],
                 8,
+            )
+            self.assertEqual(
+                report_payload["cases"][2]["trace"][4]["control_path"]["tile_compute_en"],
+                [1, 1],
             )
             self.assertEqual(
                 report_payload["cases"][2]["summary"]["compute_path"]["estimated_mac_operations"],

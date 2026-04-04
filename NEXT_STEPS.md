@@ -48,7 +48,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Estendere `systolic_tile` oltre il caso `2x2`.
 - [ ] Introdurre configurazione parametrica reale di tile size senza riduzione seed per la verifica locale.
 - [x] Aggiungere gestione del flush della pipeline del tile.
-- [ ] Separare chiaramente control-path e data-path del cluster.
+- [x] Separare chiaramente control-path e data-path del cluster.
 
 ## Memoria e Movimento Dati
 
@@ -94,9 +94,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- `systolic_tile` non e' piu' fissato al solo caso `2x2` e la tile size reale entra nella configurazione;
-- il seed RTL del cluster/top-level usa di default una shape derivata dal candidato, senza fallback fisso a `2x2`;
-- il cluster distingue meglio control-path e data-path, evitando assunzioni troppo rigide nel top-level;
-- la tile size reale viene propagata in modo coerente al seed RTL del cluster, non solo verificata con testbench dedicati;
+- la tile size reale viene propagata in modo coerente al seed RTL del cluster e del top-level senza envelope seed ridotto;
+- i moduli seed del cluster continuano a restare verificabili anche con tile rettangolari o edge superiori a `4`;
+- il top-level mantiene la separazione attuale tra control-path e data-path anche con tile size piu' grandi;
+- i report restano coerenti con la nuova tile size reale, senza perdere metriche di memoria, controllo e compute;
 - i test del cluster e del top-level continuano a passare anche dentro il container Docker;
 - il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.

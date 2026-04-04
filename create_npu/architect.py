@@ -61,6 +61,7 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
         "tile_compute_unit",
         "dma_engine",
         "scheduler",
+        "cluster_control",
         "top_npu",
     ]
     if candidate_id == "throughput_max":

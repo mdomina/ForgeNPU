@@ -11,7 +11,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - parsing euristico del requisito con memoria disponibile, bandwidth, area, latenza e frequenza target;
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
-- generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`;
+- generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control` e `top_npu`;
 - `scratchpad_controller` seed con tracciamento di validita' e due banchi selezionabili, coerente con il timing del path DMA/load;
 - `tile_compute_unit` seed capace di leggere e scrivere banchi distinti dello scratchpad per esperimenti di prefetch/ping-pong locali;
 - `top_npu` seed che decodifica gli slot del programma in `bank + local_addr`, usando davvero il banking del tile nel flow end-to-end;
@@ -20,6 +20,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute, descrittori minimi di memoria e clear finale;
 - primitive seed di `LOAD/STORE` con base address, stride e burst count, propagate nel `scheduler` e nel `top_npu`;
 - stato esplicito `FLUSH` nel `scheduler`, propagato fino al `tile_compute_unit` e al `systolic_tile` per separare il drain/reset della pipeline dall'azzeramento degli accumulatori;
+- `cluster_control` seed dedicato al routing del control-path tra `scheduler` e tile, con decode di bank/local address e broadcast per-tile delle primitive di DMA/load/compute/store/flush/clear;
 - writeback `STORE` top-level segmentato per burst, con payload risultati e `valid_mask` osservabili a livello top-level;
 - `top_npu` parametrico su `TILE_COUNT` con wiring multi-tile seed e broadcast control-path verso piu' `tile_compute_unit`;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
@@ -29,7 +30,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del `top_npu` usa ora banking, descrittori minimi, burst di writeback e flush esplicito della pipeline nel flow end-to-end; inoltre la shape di default del cluster non e' piu' fissa a `2x2`, ma derivata dalla tile architetturale entro un envelope di verifica locale. Resta aperto il passo successivo: propagare integralmente tile size reale, partizionamento dati e interconnect dedicato senza riduzioni seed.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del cluster e' ora separato in modo esplicito dal data-path del top-level, con banking, descrittori minimi, burst di writeback e flush della pipeline instradati dal modulo dedicato; inoltre la shape di default del cluster non e' piu' fissa a `2x2`, ma derivata dalla tile architetturale entro un envelope di verifica locale. Resta aperto il passo successivo: propagare integralmente tile size reale, partizionamento dati e interconnect dedicato senza riduzioni seed.
 
 ## Quick Start
 

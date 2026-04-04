@@ -25,6 +25,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Generalizzare le primitive di memoria con descrittori minimi di `load/store`, stride e burst count.
 - [x] Rendere osservabile il writeback burst del `top_npu` con payload segmentato e `valid_mask`.
 - [x] Richiudere il flow completo nel container Docker con `verilator`, `iverilog` e `yosys` verdi.
+- [x] Aggiungere uno stato esplicito di `FLUSH` nel `scheduler` e propagarlo fino al tile.
+- [x] Verificare `systolic_tile` anche oltre il caso `2x2` con un testbench rettangolare dedicato.
 
 ## Priorita' Immediata
 
@@ -42,9 +44,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 ## Evoluzione del Compute Cluster
 
-- [ ] Estendere `systolic_tile` oltre il caso `2x2`.
+- [x] Estendere `systolic_tile` oltre il caso `2x2`.
 - [ ] Introdurre configurazione parametrica reale di tile size.
-- [ ] Aggiungere gestione del flush della pipeline del tile.
+- [x] Aggiungere gestione del flush della pipeline del tile.
 - [ ] Separare chiaramente control-path e data-path del cluster.
 
 ## Memoria e Movimento Dati
@@ -93,6 +95,6 @@ Il prossimo milestone puo' essere considerato chiuso quando:
 
 - `systolic_tile` non e' piu' fissato al solo caso `2x2` e la tile size reale entra nella configurazione;
 - il cluster distingue meglio control-path e data-path, evitando assunzioni troppo rigide nel top-level;
-- esiste una gestione esplicita del flush della pipeline del tile coerente con timing e report;
+- la tile size reale viene propagata in modo coerente al seed RTL del cluster, non solo verificata con testbench dedicati;
 - i test del cluster e del top-level continuano a passare anche dentro il container Docker;
 - il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.

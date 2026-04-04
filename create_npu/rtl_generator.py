@@ -93,6 +93,12 @@ def emit_seed_rtl(
         encoding="utf-8",
     )
 
+    tile_rect_tb_path = tb_dir / "systolic_tile_rect_tb.sv"
+    tile_rect_tb_path.write_text(
+        _systolic_tile_rect_tb_template(operand_width=operand_width, acc_width=acc_width),
+        encoding="utf-8",
+    )
+
     scratchpad_tb_path = tb_dir / "scratchpad_controller_tb.sv"
     scratchpad_tb_path.write_text(
         _scratchpad_controller_tb_template(operand_width=operand_width),
@@ -169,6 +175,7 @@ def emit_seed_rtl(
             str(mac_tb_path),
             str(pe_tb_path),
             str(tile_tb_path),
+            str(tile_rect_tb_path),
             str(dma_tb_path),
             str(scratchpad_tb_path),
             str(tile_compute_tb_path),
@@ -384,6 +391,7 @@ def _systolic_tile_template(operand_width: int, acc_width: int) -> str:
   input  logic signed [COLS*DATA_WIDTH-1:0] weights_north_i,
   input  logic load_inputs_en,
   input  logic compute_en,
+  input  logic flush_pipeline,
   input  logic clear_acc,
   output logic signed [ROWS*COLS*ACC_WIDTH-1:0] psums_o,
   output logic [ROWS*COLS-1:0] valids_o
@@ -431,7 +439,15 @@ def _systolic_tile_template(operand_width: int, acc_width: int) -> str:
         end
       end
     end else begin
-      if (load_inputs_en) begin
+      if (flush_pipeline) begin
+        for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
+          for (col_idx = 0; col_idx < COLS; col_idx = col_idx + 1) begin
+            activation_regs[row_idx][col_idx] <= '0;
+            weight_regs[row_idx][col_idx] <= '0;
+            valid_regs[row_idx][col_idx] <= 1'b0;
+          end
+        end
+      end else if (load_inputs_en) begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
           for (col_idx = COLS - 1; col_idx >= 0; col_idx = col_idx - 1) begin
             if (col_idx == 0) begin
@@ -464,14 +480,14 @@ def _systolic_tile_template(operand_width: int, acc_width: int) -> str:
             valid_regs[row_idx][col_idx] <= 1'b0;
           end
         end
-      end else if (compute_en) begin
+      end else if (compute_en && !flush_pipeline) begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
           for (col_idx = 0; col_idx < COLS; col_idx = col_idx + 1) begin
             psum_regs[row_idx][col_idx] <= pe_psums[row_idx][col_idx];
             valid_regs[row_idx][col_idx] <= pe_valids[row_idx][col_idx];
           end
         end
-      end else begin
+      end else if (!flush_pipeline) begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
           for (col_idx = 0; col_idx < COLS; col_idx = col_idx + 1) begin
             valid_regs[row_idx][col_idx] <= 1'b0;
@@ -510,6 +526,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
   logic signed [COLS*DATA_WIDTH-1:0] weights_north_i;
   logic load_inputs_en;
   logic compute_en;
+  logic flush_pipeline;
   logic clear_acc;
   logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_o;
   logic [PE_COUNT-1:0] valids_o;
@@ -526,6 +543,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     .weights_north_i(weights_north_i),
     .load_inputs_en(load_inputs_en),
     .compute_en(compute_en),
+    .flush_pipeline(flush_pipeline),
     .clear_acc(clear_acc),
     .psums_o(psums_o),
     .valids_o(valids_o)
@@ -583,6 +601,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     weights_north_i = '0;
     load_inputs_en = 1'b0;
     compute_en = 1'b0;
+    flush_pipeline = 1'b0;
     clear_acc = 1'b0;
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
@@ -616,6 +635,13 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     expect_outputs(42, 16, 40, 24, 4'b1111);
 
     compute_en = 1'b0;
+    flush_pipeline = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(42, 16, 40, 24, 4'b0000);
+
+    flush_pipeline = 1'b0;
+    compute_en = 1'b0;
     clear_acc = 1'b1;
     @(posedge clk);
     #1;
@@ -632,9 +658,114 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     compute_en = 1'b1;
     @(posedge clk);
     #1;
-    expect_outputs(9, 6, 70, 32, 4'b1111);
+    expect_outputs(9, 0, 0, 0, 4'b1111);
 
     $display("systolic_tile_tb passed");
+    $finish;
+  end
+endmodule
+"""
+
+
+def _systolic_tile_rect_tb_template(operand_width: int, acc_width: int) -> str:
+    rect_case = _systolic_tile_rectangular_flush_case()
+    return f"""module systolic_tile_rect_tb;
+  localparam int DATA_WIDTH = {operand_width};
+  localparam int ACC_WIDTH = {acc_width};
+  localparam int ROWS = 1;
+  localparam int COLS = 3;
+  localparam int PE_COUNT = ROWS * COLS;
+
+  logic clk;
+  logic rst_n;
+  logic signed [ROWS*DATA_WIDTH-1:0] activations_west_i;
+  logic signed [COLS*DATA_WIDTH-1:0] weights_north_i;
+  logic load_inputs_en;
+  logic compute_en;
+  logic flush_pipeline;
+  logic clear_acc;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_o;
+  logic [PE_COUNT-1:0] valids_o;
+
+  systolic_tile #(
+    .DATA_WIDTH(DATA_WIDTH),
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS)
+  ) dut (
+    .clk(clk),
+    .rst_n(rst_n),
+    .activations_west_i(activations_west_i),
+    .weights_north_i(weights_north_i),
+    .load_inputs_en(load_inputs_en),
+    .compute_en(compute_en),
+    .flush_pipeline(flush_pipeline),
+    .clear_acc(clear_acc),
+    .psums_o(psums_o),
+    .valids_o(valids_o)
+  );
+
+  always #5 clk = ~clk;
+
+  task automatic drive_and_expect(
+    input integer row0_act,
+    input integer col0_weight,
+    input integer col1_weight,
+    input integer col2_weight,
+    input logic request_load,
+    input logic request_compute,
+    input logic request_flush,
+    input logic request_clear,
+    input integer p0,
+    input integer p1,
+    input integer p2,
+    input logic [PE_COUNT-1:0] expected_valids
+  );
+    begin
+      activations_west_i = '0;
+      weights_north_i = '0;
+      activations_west_i[0 +: DATA_WIDTH] = row0_act;
+      weights_north_i[0 +: DATA_WIDTH] = col0_weight;
+      weights_north_i[DATA_WIDTH +: DATA_WIDTH] = col1_weight;
+      weights_north_i[2*DATA_WIDTH +: DATA_WIDTH] = col2_weight;
+      load_inputs_en = request_load;
+      compute_en = request_compute;
+      flush_pipeline = request_flush;
+      clear_acc = request_clear;
+      @(posedge clk);
+      #1;
+      if ($signed(psums_o[0 +: ACC_WIDTH]) !== p0 ||
+          $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]) !== p1 ||
+          $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]) !== p2 ||
+          valids_o !== expected_valids) begin
+        $fatal(
+          1,
+          "systolic_tile_rect_tb failed: expected (%0d %0d %0d %0b), got (%0d %0d %0d %0b)",
+          p0, p1, p2, expected_valids,
+          $signed(psums_o[0 +: ACC_WIDTH]),
+          $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          valids_o
+        );
+      end
+    end
+  endtask
+
+  initial begin
+    clk = 1'b0;
+    rst_n = 1'b0;
+    activations_west_i = '0;
+    weights_north_i = '0;
+    load_inputs_en = 1'b0;
+    compute_en = 1'b0;
+    flush_pipeline = 1'b0;
+    clear_acc = 1'b0;
+    repeat (2) @(posedge clk);
+    rst_n = 1'b1;
+
+{_render_systolic_tile_rect_tb_steps(rect_case)}
+
+    $display("systolic_tile_rect_tb passed");
     $finish;
   end
 endmodule
@@ -1109,6 +1240,7 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
   input  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] weight_read_addr_i,
   input  logic compute_en_i,
+  input  logic flush_pipeline_i,
   input  logic clear_acc_i,
   output logic scratchpad_vector_valid_o,
   output logic dma_done_o,
@@ -1198,6 +1330,7 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
     .weights_north_i(weights_north),
     .load_inputs_en(scratchpad_vector_valid_o),
     .compute_en(compute_en_i),
+    .flush_pipeline(flush_pipeline_i),
     .clear_acc(clear_acc_i),
     .psums_o(psums_o),
     .valids_o(valids_o)
@@ -1233,6 +1366,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i;
   logic [ADDR_WIDTH-1:0] weight_read_addr_i;
   logic compute_en_i;
+  logic flush_pipeline_i;
   logic clear_acc_i;
   logic scratchpad_vector_valid_o;
   logic dma_done_o;
@@ -1262,6 +1396,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     .weight_read_bank_i(weight_read_bank_i),
     .weight_read_addr_i(weight_read_addr_i),
     .compute_en_i(compute_en_i),
+    .flush_pipeline_i(flush_pipeline_i),
     .clear_acc_i(clear_acc_i),
     .scratchpad_vector_valid_o(scratchpad_vector_valid_o),
     .dma_done_o(dma_done_o),
@@ -1284,6 +1419,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
       activation_read_bank_i = '0;
       weight_read_bank_i = '0;
       compute_en_i = 1'b0;
+      flush_pipeline_i = 1'b0;
       clear_acc_i = 1'b0;
     end
   endtask
@@ -1362,6 +1498,15 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     end
   endtask
 
+  task automatic flush_step;
+    begin
+      idle_controls();
+      flush_pipeline_i = 1'b1;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
   task automatic expect_outputs(
     input integer p0,
     input integer p1,
@@ -1423,6 +1568,9 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     compute_step();
     expect_outputs(42, 16, 40, 24, 4'b1111, 1'b0);
 
+    flush_step();
+    expect_outputs(42, 16, 40, 24, 4'b0000, 1'b0);
+
     clear_step();
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b0);
 
@@ -1470,6 +1618,7 @@ def _scheduler_template(operand_width: int) -> str:
   output logic [ADDR_WIDTH-1:0] result_write_addr_o,
   output logic [ADDR_WIDTH-1:0] store_burst_index_o,
   output logic compute_en_o,
+  output logic flush_pipeline_o,
   output logic clear_acc_o,
   output logic busy_o,
   output logic done_o,
@@ -1481,8 +1630,9 @@ def _scheduler_template(operand_width: int) -> str:
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
   localparam logic [3:0] S_STORE = 4'd5;
-  localparam logic [3:0] S_CLEAR = 4'd6;
-  localparam logic [3:0] S_DONE = 4'd7;
+  localparam logic [3:0] S_FLUSH = 4'd6;
+  localparam logic [3:0] S_CLEAR = 4'd7;
+  localparam logic [3:0] S_DONE = 4'd8;
   localparam logic [ADDR_WIDTH-1:0] ADDR_ZERO = '0;
 
   logic [3:0] state_q;
@@ -1632,11 +1782,15 @@ def _scheduler_template(operand_width: int) -> str:
         if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
           store_index_d = store_index_q + 1'b1;
           state_d = S_STORE;
-        end else if (program_clear_on_done_q) begin
-          store_index_d = ADDR_ZERO;
-          state_d = S_CLEAR;
         end else begin
           store_index_d = ADDR_ZERO;
+          state_d = S_FLUSH;
+        end
+      end
+      S_FLUSH: begin
+        if (program_clear_on_done_q) begin
+          state_d = S_CLEAR;
+        end else begin
           state_d = S_DONE;
         end
       end
@@ -1688,6 +1842,7 @@ def _scheduler_template(operand_width: int) -> str:
     result_write_addr_o = ADDR_ZERO;
     store_burst_index_o = ADDR_ZERO;
     compute_en_o = 1'b0;
+    flush_pipeline_o = 1'b0;
     clear_acc_o = 1'b0;
     busy_o = (state_q != S_IDLE) && (state_q != S_DONE);
     done_o = (state_q == S_DONE);
@@ -1739,6 +1894,9 @@ def _scheduler_template(operand_width: int) -> str:
         result_write_addr_o = descriptor_addr(result_base_addr_i, store_index_q, store_stride_sanitized);
         store_burst_index_o = store_index_q;
       end
+      S_FLUSH: begin
+        flush_pipeline_o = 1'b1;
+      end
       S_CLEAR: begin
         clear_acc_o = 1'b1;
       end
@@ -1766,8 +1924,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
   localparam logic [3:0] S_STORE = 4'd5;
-  localparam logic [3:0] S_CLEAR = 4'd6;
-  localparam logic [3:0] S_DONE = 4'd7;
+  localparam logic [3:0] S_FLUSH = 4'd6;
+  localparam logic [3:0] S_CLEAR = 4'd7;
+  localparam logic [3:0] S_DONE = 4'd8;
 
   logic clk;
   logic rst_n;
@@ -1797,6 +1956,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic [ADDR_WIDTH-1:0] result_write_addr_o;
   logic [ADDR_WIDTH-1:0] store_burst_index_o;
   logic compute_en_o;
+  logic flush_pipeline_o;
   logic clear_acc_o;
   logic busy_o;
   logic done_o;
@@ -1836,6 +1996,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .result_write_addr_o(result_write_addr_o),
     .store_burst_index_o(store_burst_index_o),
     .compute_en_o(compute_en_o),
+    .flush_pipeline_o(flush_pipeline_o),
     .clear_acc_o(clear_acc_o),
     .busy_o(busy_o),
     .done_o(done_o),
@@ -1861,6 +2022,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
     input integer expected_result_write_addr,
     input integer expected_store_burst_index,
     input logic expected_compute,
+    input logic expected_flush,
     input logic expected_clear
   );
     begin
@@ -1882,6 +2044,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
           result_write_addr_o !== expected_result_write_addr[ADDR_WIDTH-1:0] ||
           store_burst_index_o !== expected_store_burst_index[ADDR_WIDTH-1:0] ||
           compute_en_o !== expected_compute ||
+          flush_pipeline_o !== expected_flush ||
           clear_acc_o !== expected_clear) begin
         $fatal(1, "scheduler_tb failed");
       end
@@ -1998,6 +2161,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   logic [ADDR_WIDTH-1:0] activation_local_read_addr;
   logic [ADDR_WIDTH-1:0] weight_local_read_addr;
   logic compute_en;
+  logic flush_pipeline;
   logic clear_acc;
   logic [TILE_COUNT-1:0] scratchpad_vector_valid_unused;
   logic [TILE_COUNT-1:0] dma_done_unused;
@@ -2041,6 +2205,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
     .result_write_addr_o(result_write_addr),
     .store_burst_index_o(store_burst_index),
     .compute_en_o(compute_en),
+    .flush_pipeline_o(flush_pipeline),
     .clear_acc_o(clear_acc),
     .busy_o(busy_o),
     .done_o(done_o),
@@ -2080,6 +2245,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
         .weight_read_bank_i(weight_read_bank_select),
         .weight_read_addr_i(weight_local_read_addr),
         .compute_en_i(compute_en && tile_enable_i[tile_idx]),
+        .flush_pipeline_i(flush_pipeline && tile_enable_i[tile_idx]),
         .clear_acc_i(clear_acc && tile_enable_i[tile_idx]),
         .scratchpad_vector_valid_o(scratchpad_vector_valid_unused[tile_idx]),
         .dma_done_o(dma_done_unused[tile_idx]),
@@ -2131,8 +2297,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
   localparam logic [3:0] S_STORE = 4'd5;
-  localparam logic [3:0] S_CLEAR = 4'd6;
-  localparam logic [3:0] S_DONE = 4'd7;
+  localparam logic [3:0] S_FLUSH = 4'd6;
+  localparam logic [3:0] S_CLEAR = 4'd7;
+  localparam logic [3:0] S_DONE = 4'd8;
 
   logic clk;
   logic rst_n;
@@ -2375,6 +2542,64 @@ def _program_seed_vectors() -> Dict[str, object]:
     }
 
 
+def _systolic_tile_rectangular_flush_case() -> Dict[str, object]:
+    return {
+        "name": "rectangular_tile_flush",
+        "rows": 1,
+        "cols": 3,
+        "steps": [
+        {
+            "activations_west_i": [2],
+            "weights_north_i": [3, 4, 5],
+            "load_inputs_en": 1,
+            "compute_en": 0,
+            "clear_acc": 0,
+            "flush_pipeline": 0,
+            "expected": {
+                "psums_o": [0, 0, 0],
+                "valids_o": [0, 0, 0],
+            },
+        },
+        {
+            "activations_west_i": [6],
+            "weights_north_i": [7, 8, 9],
+            "load_inputs_en": 1,
+            "compute_en": 0,
+            "clear_acc": 0,
+            "flush_pipeline": 0,
+            "expected": {
+                "psums_o": [0, 0, 0],
+                "valids_o": [0, 0, 0],
+            },
+        },
+        {
+            "activations_west_i": [0],
+            "weights_north_i": [0, 0, 0],
+            "load_inputs_en": 0,
+            "compute_en": 1,
+            "clear_acc": 0,
+            "flush_pipeline": 0,
+            "expected": {
+                "psums_o": [42, 16, 18],
+                "valids_o": [1, 1, 1],
+            },
+        },
+        {
+            "activations_west_i": [0],
+            "weights_north_i": [0, 0, 0],
+            "load_inputs_en": 0,
+            "compute_en": 0,
+            "clear_acc": 0,
+            "flush_pipeline": 1,
+            "expected": {
+                "psums_o": [42, 16, 18],
+                "valids_o": [0, 0, 0],
+            },
+        },
+        ],
+    }
+
+
 def _scheduler_expected(
     state: int,
     busy: int,
@@ -2390,6 +2615,7 @@ def _scheduler_expected(
     result_write_addr: int = 0,
     store_burst_index: int = 0,
     compute_en: int = 0,
+    flush_pipeline: int = 0,
     clear_acc: int = 0,
 ) -> Dict[str, object]:
     return {
@@ -2407,6 +2633,7 @@ def _scheduler_expected(
         "result_write_addr_o": result_write_addr,
         "store_burst_index_o": store_burst_index,
         "compute_en_o": compute_en,
+        "flush_pipeline_o": flush_pipeline,
         "clear_acc_o": clear_acc,
     }
 
@@ -2441,6 +2668,33 @@ def _format_logic_literal(bits: List[int], width: int) -> str:
     return f"{width}'b" + "".join(str(bit) for bit in reversed(padded))
 
 
+def _render_systolic_tile_rect_tb_steps(case: Dict[str, object]) -> str:
+    lines = []
+    pe_count = int(case["rows"]) * int(case["cols"])
+    for step in case["steps"]:
+        activations = list(step["activations_west_i"]) + [0]
+        weights = list(step["weights_north_i"]) + [0, 0, 0]
+        psums = list(step["expected"]["psums_o"]) + [0 for _ in range(max(0, pe_count - len(step["expected"]["psums_o"])))]
+        expected_valids = _format_logic_literal(step["expected"]["valids_o"], pe_count)
+        lines.append(
+            "    drive_and_expect("
+            f"{int(activations[0])}, "
+            f"{int(weights[0])}, "
+            f"{int(weights[1])}, "
+            f"{int(weights[2])}, "
+            f"1'b{int(step['load_inputs_en'])}, "
+            f"1'b{int(step['compute_en'])}, "
+            f"1'b{int(step.get('flush_pipeline', 0))}, "
+            f"1'b{int(step['clear_acc'])}, "
+            f"{int(psums[0])}, "
+            f"{int(psums[1])}, "
+            f"{int(psums[2])}, "
+            f"{expected_valids}"
+            ");"
+        )
+    return "\n".join(lines)
+
+
 def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
     lines = []
     for step in case["steps"]:
@@ -2464,6 +2718,7 @@ def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
             f"{int(expected['result_write_addr_o'])}, "
             f"{int(expected['store_burst_index_o'])}, "
             f"1'b{int(expected['compute_en_o'])}, "
+            f"1'b{int(expected.get('flush_pipeline_o', 0))}, "
             f"1'b{int(expected['clear_acc_o'])}"
             ");"
         )
@@ -2502,7 +2757,7 @@ def _render_top_npu_tb_steps(case: Dict[str, object], total_pe_count: int = 8) -
 
 def _scheduler_sequence_case() -> Dict[str, object]:
     vectors = _program_seed_vectors()
-    starts = [1] + [0 for _ in range(12)]
+    starts = [1] + [0 for _ in range(13)]
     steps = []
     for start_value in starts:
         payload = dict(vectors)
@@ -2526,7 +2781,7 @@ def _scheduler_short_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    starts = [1] + [0 for _ in range(8)]
+    starts = [1] + [0 for _ in range(9)]
     steps = []
     for start_value in starts:
         payload = dict(vectors)
@@ -2546,7 +2801,7 @@ def _scheduler_short_sequence_case() -> Dict[str, object]:
 
 def _top_npu_sequence_case() -> Dict[str, object]:
     vectors = _program_seed_vectors()
-    starts = [1] + [0 for _ in range(12)]
+    starts = [1] + [0 for _ in range(13)]
     steps = []
     for start_value in starts:
         payload = dict(vectors)
@@ -2571,7 +2826,7 @@ def _top_npu_short_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    starts = [1] + [0 for _ in range(8)]
+    starts = [1] + [0 for _ in range(9)]
     steps = []
     for start_value in starts:
         payload = dict(vectors)
@@ -2597,7 +2852,7 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    starts = [1] + [0 for _ in range(8)]
+    starts = [1] + [0 for _ in range(9)]
     steps = []
     for start_value in starts:
         payload = dict(vectors)

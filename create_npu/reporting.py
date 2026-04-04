@@ -135,6 +135,7 @@ def _build_case_report(
                 },
                 "compute_path": {
                     "compute_en": int(scheduler_snapshot["compute_en_o"]),
+                    "flush_pipeline": int(scheduler_snapshot.get("flush_pipeline_o", 0)),
                     "clear_acc": int(scheduler_snapshot["clear_acc_o"]),
                     "psums": psums,
                     "valids": valids,
@@ -222,6 +223,9 @@ def _event_tags(scheduler_snapshot: Dict[str, Any], valid_lane_count: int) -> Li
     if int(scheduler_snapshot.get("store_results_en_o", 0)):
         tags.append("store_results")
 
+    if int(scheduler_snapshot.get("flush_pipeline_o", 0)):
+        tags.append("flush_pipeline")
+
     if int(scheduler_snapshot["clear_acc_o"]):
         tags.append("clear")
 
@@ -270,6 +274,7 @@ def _empty_summary() -> Dict[str, Any]:
         },
         "compute_path": {
             "compute_cycles": 0,
+            "flush_cycles": 0,
             "clear_cycles": 0,
             "output_valid_cycles": 0,
             "peak_valid_lanes": 0,
@@ -360,6 +365,9 @@ def _summarize_case_reports(
                 summary["compute_path"]["estimated_mac_operations"] += int(
                     active_tile_count * rows * cols
                 )
+
+            if compute_path.get("flush_pipeline"):
+                summary["compute_path"]["flush_cycles"] += 1
 
             if compute_path["clear_acc"]:
                 summary["compute_path"]["clear_cycles"] += 1

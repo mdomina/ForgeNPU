@@ -8,8 +8,9 @@ SCHEDULER_DMA_WGT = 2
 SCHEDULER_LOAD = 3
 SCHEDULER_COMPUTE = 4
 SCHEDULER_STORE = 5
-SCHEDULER_CLEAR = 6
-SCHEDULER_DONE = 7
+SCHEDULER_FLUSH = 6
+SCHEDULER_CLEAR = 7
+SCHEDULER_DONE = 8
 
 SCHEDULER_STATE_NAMES = {
     SCHEDULER_IDLE: "IDLE",
@@ -18,6 +19,7 @@ SCHEDULER_STATE_NAMES = {
     SCHEDULER_LOAD: "LOAD",
     SCHEDULER_COMPUTE: "COMPUTE",
     SCHEDULER_STORE: "STORE",
+    SCHEDULER_FLUSH: "FLUSH",
     SCHEDULER_CLEAR: "CLEAR",
     SCHEDULER_DONE: "DONE",
 }
@@ -56,10 +58,14 @@ def systolic_tile_reference(
         load_inputs_en = bool(step["load_inputs_en"])
         compute_en = bool(step["compute_en"])
         clear_acc = bool(step["clear_acc"])
+        flush_pipeline = bool(step.get("flush_pipeline", 0))
         activations_west = [int(value) for value in step["activations_west_i"]]
         weights_north = [int(value) for value in step["weights_north_i"]]
 
-        if load_inputs_en:
+        if flush_pipeline:
+            activation_regs = [[0 for _ in range(cols)] for _ in range(rows)]
+            weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
+        elif load_inputs_en:
             next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
             next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
 
@@ -240,6 +246,7 @@ def tile_compute_unit_reference(
         )
         compute_en = bool(step["compute_en_i"])
         clear_acc = bool(step["clear_acc_i"])
+        flush_pipeline = bool(step.get("flush_pipeline_i", 0))
 
         prev_activation_regs = [row[:] for row in activation_regs]
         prev_weight_regs = [row[:] for row in weight_regs]
@@ -248,7 +255,11 @@ def tile_compute_unit_reference(
         next_psum_regs = [row[:] for row in psum_regs]
         next_valid_regs = [row[:] for row in valid_regs]
 
-        if scratchpad_vector_valid:
+        if flush_pipeline:
+            next_activation_regs = [[0 for _ in range(cols)] for _ in range(rows)]
+            next_weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
+            next_valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
+        elif scratchpad_vector_valid:
             for row in range(rows):
                 for col in range(cols - 1, -1, -1):
                     if col == 0:
@@ -402,6 +413,7 @@ def top_npu_reference(
         "activation_read_addr_o": 0,
         "weight_read_addr_o": 0,
         "compute_en_o": 0,
+        "flush_pipeline_o": 0,
         "clear_acc_o": 0,
         "store_burst_index_o": 0,
     }
@@ -433,6 +445,7 @@ def top_npu_reference(
                     "weight_read_bank_i": _slot_bank_select(weight_slot_addr),
                     "weight_read_addr_i": _slot_local_addr(weight_slot_addr),
                     "compute_en_i": scheduler_snapshot["compute_en_o"] if tile_enabled else 0,
+                    "flush_pipeline_i": scheduler_snapshot["flush_pipeline_o"] if tile_enabled else 0,
                     "clear_acc_i": scheduler_snapshot["clear_acc_o"] if tile_enabled else 0,
                 }
             )
@@ -632,6 +645,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                 or observed["result_write_addr_o"] != expected["result_write_addr_o"]
                 or observed["store_burst_index_o"] != expected["store_burst_index_o"]
                 or observed["compute_en_o"] != expected["compute_en_o"]
+                or observed["flush_pipeline_o"] != expected["flush_pipeline_o"]
                 or observed["clear_acc_o"] != expected["clear_acc_o"]
             ):
                 failures.append(
@@ -643,7 +657,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{expected['load_vector_en_o']}, {expected['activation_read_addr_o']}, "
                     f"{expected['weight_read_addr_o']}, {expected['store_results_en_o']}, "
                     f"{expected['result_write_addr_o']}, {expected['store_burst_index_o']}, "
-                    f"{expected['compute_en_o']}, "
+                    f"{expected['compute_en_o']}, {expected['flush_pipeline_o']}, "
                     f"{expected['clear_acc_o']}), got "
                     f"({observed['state_o']}, {observed['busy_o']}, {observed['done_o']}, "
                     f"{observed['dma_valid_o']}, {observed['dma_write_weights_o']}, "
@@ -651,7 +665,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['load_vector_en_o']}, {observed['activation_read_addr_o']}, "
                     f"{observed['weight_read_addr_o']}, {observed['store_results_en_o']}, "
                     f"{observed['result_write_addr_o']}, {observed['store_burst_index_o']}, "
-                    f"{observed['compute_en_o']}, "
+                    f"{observed['compute_en_o']}, {observed['flush_pipeline_o']}, "
                     f"{observed['clear_acc_o']})"
                 )
 
@@ -907,6 +921,18 @@ def _scheduler_next_context(
                 program_compute_iterations,
                 program_clear_on_done,
             )
+        return (
+            SCHEDULER_FLUSH,
+            slot_index,
+            load_index,
+            compute_index,
+            0,
+            program_slot_count,
+            program_load_iterations,
+            program_compute_iterations,
+            program_clear_on_done,
+        )
+    if state == SCHEDULER_FLUSH:
         if program_clear_on_done:
             return (
                 SCHEDULER_CLEAR,
@@ -994,6 +1020,7 @@ def _scheduler_outputs(
         "result_write_addr_o": 0,
         "store_burst_index_o": 0,
         "compute_en_o": 0,
+        "flush_pipeline_o": 0,
         "clear_acc_o": 0,
     }
 
@@ -1042,6 +1069,8 @@ def _scheduler_outputs(
             stride=_sanitize_stride(step.get("store_stride_i", 1)),
         )
         snapshot["store_burst_index_o"] = store_index
+    elif state == SCHEDULER_FLUSH:
+        snapshot["flush_pipeline_o"] = 1
     elif state == SCHEDULER_CLEAR:
         snapshot["clear_acc_o"] = 1
 

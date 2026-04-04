@@ -392,19 +392,22 @@ def top_npu_reference(
         tile_steps = []
         for scheduler_snapshot, tile_enable_mask in zip(scheduler_snapshots, tile_enable_masks):
             tile_enabled = bool(tile_enable_mask[tile_index])
+            dma_slot_addr = int(scheduler_snapshot["dma_addr_o"])
+            activation_slot_addr = int(scheduler_snapshot["activation_read_addr_o"])
+            weight_slot_addr = int(scheduler_snapshot["weight_read_addr_o"])
             tile_steps.append(
                 {
                     "dma_valid_i": scheduler_snapshot["dma_valid_o"] if tile_enabled else 0,
                     "dma_write_weights_i": scheduler_snapshot["dma_write_weights_o"],
-                    "dma_addr_i": scheduler_snapshot["dma_addr_o"],
+                    "dma_addr_i": _slot_local_addr(dma_slot_addr),
                     "dma_payload_i": scheduler_snapshot["dma_payload_o"],
-                    "activation_write_bank_i": 0,
-                    "weight_write_bank_i": 0,
+                    "activation_write_bank_i": _slot_bank_select(dma_slot_addr),
+                    "weight_write_bank_i": _slot_bank_select(dma_slot_addr),
                     "load_vector_en_i": scheduler_snapshot["load_vector_en_o"] if tile_enabled else 0,
-                    "activation_read_bank_i": 0,
-                    "activation_read_addr_i": scheduler_snapshot["activation_read_addr_o"],
-                    "weight_read_bank_i": 0,
-                    "weight_read_addr_i": scheduler_snapshot["weight_read_addr_o"],
+                    "activation_read_bank_i": _slot_bank_select(activation_slot_addr),
+                    "activation_read_addr_i": _slot_local_addr(activation_slot_addr),
+                    "weight_read_bank_i": _slot_bank_select(weight_slot_addr),
+                    "weight_read_addr_i": _slot_local_addr(weight_slot_addr),
                     "compute_en_i": scheduler_snapshot["compute_en_o"] if tile_enabled else 0,
                     "clear_acc_i": scheduler_snapshot["clear_acc_o"] if tile_enabled else 0,
                 }
@@ -963,6 +966,16 @@ def _sanitize_bank_index(raw_value: object, bank_count: int) -> int:
     if bank_count <= 1:
         return 0
     return int(raw_value) % bank_count
+
+
+def _slot_bank_select(slot_addr: int, bank_count: int = 2) -> int:
+    return _sanitize_bank_index(slot_addr, bank_count)
+
+
+def _slot_local_addr(slot_addr: int, bank_count: int = 2) -> int:
+    if bank_count <= 1:
+        return int(slot_addr)
+    return int(slot_addr) // bank_count
 
 
 def _select_activation_slot(step: Dict[str, object], slot_index: int, width: int) -> List[int]:

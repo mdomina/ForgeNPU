@@ -1862,6 +1862,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   logic load_vector_en;
   logic [ADDR_WIDTH-1:0] activation_read_addr;
   logic [ADDR_WIDTH-1:0] weight_read_addr;
+  logic dma_bank_select;
+  logic activation_read_bank_select;
+  logic weight_read_bank_select;
+  logic [ADDR_WIDTH-1:0] dma_local_addr;
+  logic [ADDR_WIDTH-1:0] activation_local_read_addr;
+  logic [ADDR_WIDTH-1:0] weight_local_read_addr;
   logic compute_en;
   logic clear_acc;
   logic [TILE_COUNT-1:0] scratchpad_vector_valid_unused;
@@ -1900,6 +1906,13 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
     .state_o(scheduler_state_o)
   );
 
+  assign dma_bank_select = dma_addr[0];
+  assign dma_local_addr = dma_addr >> 1;
+  assign activation_read_bank_select = activation_read_addr[0];
+  assign activation_local_read_addr = activation_read_addr >> 1;
+  assign weight_read_bank_select = weight_read_addr[0];
+  assign weight_local_read_addr = weight_read_addr >> 1;
+
   generate
     for (tile_idx = 0; tile_idx < TILE_COUNT; tile_idx = tile_idx + 1) begin : gen_tiles
       tile_compute_unit #(
@@ -1913,15 +1926,15 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
         .rst_n(rst_n),
         .dma_valid_i(dma_valid && tile_enable_i[tile_idx]),
         .dma_write_weights_i(dma_write_weights),
-        .dma_addr_i(dma_addr),
+        .dma_addr_i(dma_local_addr),
         .dma_payload_i(dma_payload),
-        .activation_write_bank_i('0),
-        .weight_write_bank_i('0),
+        .activation_write_bank_i(dma_bank_select),
+        .weight_write_bank_i(dma_bank_select),
         .load_vector_en_i(load_vector_en && tile_enable_i[tile_idx]),
-        .activation_read_bank_i('0),
-        .activation_read_addr_i(activation_read_addr),
-        .weight_read_bank_i('0),
-        .weight_read_addr_i(weight_read_addr),
+        .activation_read_bank_i(activation_read_bank_select),
+        .activation_read_addr_i(activation_local_read_addr),
+        .weight_read_bank_i(weight_read_bank_select),
+        .weight_read_addr_i(weight_local_read_addr),
         .compute_en_i(compute_en && tile_enable_i[tile_idx]),
         .clear_acc_i(clear_acc && tile_enable_i[tile_idx]),
         .scratchpad_vector_valid_o(scratchpad_vector_valid_unused[tile_idx]),

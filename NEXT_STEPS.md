@@ -47,7 +47,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 ## Memoria e Movimento Dati
 
 - [x] Migliorare `scratchpad_controller` con piu' banchi o doppio buffering.
-- [ ] Collegare la selezione dei banchi allo `scheduler` e al `top_npu`.
+- [x] Collegare la selezione dei banchi allo `scheduler` e al `top_npu`.
 - [ ] Introdurre primitive di load/store piu' vicine a un flusso NPU reale.
 - [x] Modellare bandwidth e occupazione memoria nelle metriche.
 

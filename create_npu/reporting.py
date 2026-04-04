@@ -119,9 +119,12 @@ def _build_case_report(
                     "dma_valid": int(scheduler_snapshot["dma_valid_o"]),
                     "dma_write_weights": int(scheduler_snapshot["dma_write_weights_o"]),
                     "dma_addr": int(scheduler_snapshot["dma_addr_o"]),
+                    "dma_bank": int(scheduler_snapshot["dma_addr_o"]) % 2,
                     "dma_payload": [int(value) for value in scheduler_snapshot["dma_payload_o"]],
                     "load_vector_en": int(scheduler_snapshot["load_vector_en_o"]),
+                    "activation_read_bank": int(scheduler_snapshot["activation_read_addr_o"]) % 2,
                     "activation_read_addr": int(scheduler_snapshot["activation_read_addr_o"]),
+                    "weight_read_bank": int(scheduler_snapshot["weight_read_addr_o"]) % 2,
                     "weight_read_addr": int(scheduler_snapshot["weight_read_addr_o"]),
                 },
                 "compute_path": {

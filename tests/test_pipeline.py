@@ -350,6 +350,16 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report_payload["cases"][1]["program"]["clear_on_done_i"], 0)
             self.assertEqual(report_payload["cases"][2]["tile_count"], 2)
             self.assertEqual(report_payload["cases"][2]["program"]["tile_enable_i"], [1, 1])
+            self.assertEqual(report_payload["cases"][0]["trace"][0]["memory_path"]["dma_bank"], 0)
+            self.assertEqual(report_payload["cases"][0]["trace"][2]["memory_path"]["dma_bank"], 1)
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][5]["memory_path"]["activation_read_bank"],
+                1,
+            )
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][5]["memory_path"]["weight_read_bank"],
+                1,
+            )
             self.assertEqual(
                 report_payload["cases"][2]["top_npu_throughput"]["seed_peak_macs_per_cycle"],
                 8,

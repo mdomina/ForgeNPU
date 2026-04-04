@@ -115,6 +115,24 @@ class PipelineTest(unittest.TestCase):
                     / "systolic_tile.sv"
                 ).exists()
             )
+            top_npu_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "top_npu.sv"
+            ).read_text(encoding="utf-8")
+            systolic_tile_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "systolic_tile.sv"
+            ).read_text(encoding="utf-8")
+            self.assertIn("parameter int ROWS = 4", top_npu_rtl)
+            self.assertIn("parameter int COLS = 4", top_npu_rtl)
+            self.assertIn("parameter int ROWS = 4", systolic_tile_rtl)
+            self.assertIn("parameter int COLS = 4", systolic_tile_rtl)
             self.assertTrue(
                 (
                     Path(result.output_dir)
@@ -236,6 +254,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(python_reference["passed"])
             self.assertIn("casi", python_reference["summary"])
             self.assertGreaterEqual(payload["score"], 0.0)
+            self.assertIn("4x4", " ".join(payload["generated"]["notes"]))
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())

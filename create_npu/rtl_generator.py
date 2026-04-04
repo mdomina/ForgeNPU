@@ -22,6 +22,10 @@ def emit_seed_rtl(
 
     operand_width, note = _resolve_width(spec.numeric_precision)
     acc_width = max(32, operand_width * 4)
+    seed_tile_rows, seed_tile_cols = _seed_tile_shape(
+        architecture.tile_rows,
+        architecture.tile_cols,
+    )
 
     mac_unit_path = rtl_dir / "mac_unit.sv"
     mac_unit_path.write_text(
@@ -37,31 +41,53 @@ def emit_seed_rtl(
 
     systolic_tile_path = rtl_dir / "systolic_tile.sv"
     systolic_tile_path.write_text(
-        _systolic_tile_template(operand_width=operand_width, acc_width=acc_width),
+        _systolic_tile_template(
+            operand_width=operand_width,
+            acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
         encoding="utf-8",
     )
 
     scratchpad_controller_path = rtl_dir / "scratchpad_controller.sv"
     scratchpad_controller_path.write_text(
-        _scratchpad_controller_template(operand_width=operand_width),
+        _scratchpad_controller_template(
+            operand_width=operand_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
         encoding="utf-8",
     )
 
     dma_engine_path = rtl_dir / "dma_engine.sv"
     dma_engine_path.write_text(
-        _dma_engine_template(operand_width=operand_width),
+        _dma_engine_template(
+            operand_width=operand_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
         encoding="utf-8",
     )
 
     tile_compute_unit_path = rtl_dir / "tile_compute_unit.sv"
     tile_compute_unit_path.write_text(
-        _tile_compute_unit_template(operand_width=operand_width, acc_width=acc_width),
+        _tile_compute_unit_template(
+            operand_width=operand_width,
+            acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
         encoding="utf-8",
     )
 
     scheduler_path = rtl_dir / "scheduler.sv"
     scheduler_path.write_text(
-        _scheduler_template(operand_width=operand_width),
+        _scheduler_template(
+            operand_width=operand_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
         encoding="utf-8",
     )
 
@@ -70,6 +96,8 @@ def emit_seed_rtl(
         _top_npu_template(
             operand_width=operand_width,
             acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
             seed_tile_count=_seed_tile_count(architecture.tile_count),
         ),
         encoding="utf-8",
@@ -152,6 +180,19 @@ def emit_seed_rtl(
     if extra_notes:
         notes.extend(extra_notes)
 
+    if seed_tile_rows != architecture.tile_rows or seed_tile_cols != architecture.tile_cols:
+        notes.append(
+            "Il seed RTL usa una tile di default "
+            f"{seed_tile_rows}x{seed_tile_cols}, derivata dalla tile architetturale "
+            f"{architecture.tile_rows}x{architecture.tile_cols} e ridotta per mantenere "
+            "la verifica locale trattabile."
+        )
+    else:
+        notes.append(
+            "Il seed RTL propaga direttamente la tile architetturale "
+            f"{seed_tile_rows}x{seed_tile_cols} nei default del cluster."
+        )
+
     notes.append(
         "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler` e `top_npu`."
     )
@@ -205,6 +246,13 @@ def _resolve_width(precision: str) -> Tuple[int, str]:
 
 def _seed_tile_count(tile_count: int) -> int:
     return max(1, min(int(tile_count), 4))
+
+
+def _seed_tile_shape(tile_rows: int, tile_cols: int, max_edge: int = 4) -> Tuple[int, int]:
+    return (
+        max(1, min(int(tile_rows), max_edge)),
+        max(1, min(int(tile_cols), max_edge)),
+    )
 
 
 def _mac_unit_template(operand_width: int, acc_width: int) -> str:
@@ -378,12 +426,12 @@ endmodule
 """
 
 
-def _systolic_tile_template(operand_width: int, acc_width: int) -> str:
+def _systolic_tile_template(operand_width: int, acc_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module systolic_tile #(
   parameter int DATA_WIDTH = {operand_width},
   parameter int ACC_WIDTH = {acc_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols}
 ) (
   input  logic clk,
   input  logic rst_n,
@@ -772,11 +820,11 @@ endmodule
 """
 
 
-def _scratchpad_controller_template(operand_width: int) -> str:
+def _scratchpad_controller_template(operand_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module scratchpad_controller #(
   parameter int DATA_WIDTH = {operand_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2,
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
   parameter int DEPTH = 4,
   parameter int BANK_COUNT = 2,
   parameter int ADDR_WIDTH = $clog2(DEPTH),
@@ -841,11 +889,11 @@ endmodule
 """
 
 
-def _dma_engine_template(operand_width: int) -> str:
+def _dma_engine_template(operand_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module dma_engine #(
   parameter int DATA_WIDTH = {operand_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2,
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
   parameter int DEPTH = 4,
   parameter int ADDR_WIDTH = $clog2(DEPTH),
   parameter int MAX_DIM = (ROWS > COLS) ? ROWS : COLS
@@ -1214,12 +1262,12 @@ endmodule
 """
 
 
-def _tile_compute_unit_template(operand_width: int, acc_width: int) -> str:
+def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module tile_compute_unit #(
   parameter int DATA_WIDTH = {operand_width},
   parameter int ACC_WIDTH = {acc_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2,
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
   parameter int DEPTH = 4,
   parameter int BANK_COUNT = 2,
   parameter int ADDR_WIDTH = $clog2(DEPTH),
@@ -1581,11 +1629,11 @@ endmodule
 """
 
 
-def _scheduler_template(operand_width: int) -> str:
+def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module scheduler #(
   parameter int DATA_WIDTH = {operand_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2,
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
   parameter int DEPTH = 4,
   parameter int ADDR_WIDTH = $clog2(DEPTH),
   parameter int MAX_DIM = (ROWS > COLS) ? ROWS : COLS
@@ -2103,12 +2151,12 @@ endmodule
 """
 
 
-def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) -> str:
+def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_cols: int, seed_tile_count: int) -> str:
     return f"""module top_npu #(
   parameter int DATA_WIDTH = {operand_width},
   parameter int ACC_WIDTH = {acc_width},
-  parameter int ROWS = 2,
-  parameter int COLS = 2,
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
   parameter int DEPTH = 4,
   parameter int TILE_COUNT = {seed_tile_count},
   parameter int PE_COUNT = ROWS * COLS,
@@ -3526,6 +3574,10 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
 def _design_intent_template(
     spec: RequirementSpec, architecture: ArchitectureCandidate
 ) -> str:
+    seed_tile_rows, seed_tile_cols = _seed_tile_shape(
+        architecture.tile_rows,
+        architecture.tile_cols,
+    )
     rationale = "\n".join(f"- {line}" for line in architecture.rationale)
     assumptions = "\n".join(f"- {line}" for line in spec.assumptions) or "- Nessuna"
     ambiguities = "\n".join(f"- {line}" for line in spec.ambiguities) or "- Nessuna"
@@ -3562,6 +3614,7 @@ def _design_intent_template(
 
 - Famiglia: {architecture.family}
 - Tile: {architecture.tile_rows}x{architecture.tile_cols}
+- Default `ROWS`x`COLS` del seed RTL: {seed_tile_rows}x{seed_tile_cols}
 - Tile count: {architecture.tile_count}
 - Default `TILE_COUNT` del seed RTL: {_seed_tile_count(architecture.tile_count)}
 - Mesh logica: {architecture.pe_rows}x{architecture.pe_cols}

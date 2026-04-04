@@ -27,6 +27,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Richiudere il flow completo nel container Docker con `verilator`, `iverilog` e `yosys` verdi.
 - [x] Aggiungere uno stato esplicito di `FLUSH` nel `scheduler` e propagarlo fino al tile.
 - [x] Verificare `systolic_tile` anche oltre il caso `2x2` con un testbench rettangolare dedicato.
+- [x] Derivare la shape di default del seed RTL dalla tile architetturale del candidato, evitando il `2x2` fisso nel cluster.
 
 ## Priorita' Immediata
 
@@ -45,7 +46,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 ## Evoluzione del Compute Cluster
 
 - [x] Estendere `systolic_tile` oltre il caso `2x2`.
-- [ ] Introdurre configurazione parametrica reale di tile size.
+- [ ] Introdurre configurazione parametrica reale di tile size senza riduzione seed per la verifica locale.
 - [x] Aggiungere gestione del flush della pipeline del tile.
 - [ ] Separare chiaramente control-path e data-path del cluster.
 
@@ -94,6 +95,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 Il prossimo milestone puo' essere considerato chiuso quando:
 
 - `systolic_tile` non e' piu' fissato al solo caso `2x2` e la tile size reale entra nella configurazione;
+- il seed RTL del cluster/top-level usa di default una shape derivata dal candidato, senza fallback fisso a `2x2`;
 - il cluster distingue meglio control-path e data-path, evitando assunzioni troppo rigide nel top-level;
 - la tile size reale viene propagata in modo coerente al seed RTL del cluster, non solo verificata con testbench dedicati;
 - i test del cluster e del top-level continuano a passare anche dentro il container Docker;

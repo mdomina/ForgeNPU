@@ -7,8 +7,9 @@ SCHEDULER_DMA_ACT = 1
 SCHEDULER_DMA_WGT = 2
 SCHEDULER_LOAD = 3
 SCHEDULER_COMPUTE = 4
-SCHEDULER_CLEAR = 5
-SCHEDULER_DONE = 6
+SCHEDULER_STORE = 5
+SCHEDULER_CLEAR = 6
+SCHEDULER_DONE = 7
 
 SCHEDULER_STATE_NAMES = {
     SCHEDULER_IDLE: "IDLE",
@@ -16,6 +17,7 @@ SCHEDULER_STATE_NAMES = {
     SCHEDULER_DMA_WGT: "DMA_WGT",
     SCHEDULER_LOAD: "LOAD",
     SCHEDULER_COMPUTE: "COMPUTE",
+    SCHEDULER_STORE: "STORE",
     SCHEDULER_CLEAR: "CLEAR",
     SCHEDULER_DONE: "DONE",
 }
@@ -331,6 +333,7 @@ def scheduler_reference(
     slot_index = 0
     load_index = 0
     compute_index = 0
+    store_index = 0
     program_slot_count = 2
     program_load_iterations = 2
     program_compute_iterations = 2
@@ -343,6 +346,7 @@ def scheduler_reference(
             slot_index,
             load_index,
             compute_index,
+            store_index,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -352,7 +356,9 @@ def scheduler_reference(
             slot_index=slot_index,
             load_index=load_index,
             compute_index=compute_index,
+            store_index=store_index,
             step=step,
+            rows=rows,
             program_slot_count=program_slot_count,
             program_load_iterations=program_load_iterations,
             program_compute_iterations=program_compute_iterations,
@@ -366,6 +372,7 @@ def scheduler_reference(
                 cols=cols,
                 slot_index=slot_index,
                 load_index=load_index,
+                store_index=store_index,
                 program_slot_count=program_slot_count,
             )
         )
@@ -386,11 +393,28 @@ def top_npu_reference(
         _sanitize_tile_enable_mask(step.get("tile_enable_i"), sanitized_tile_count)
         for step in steps
     ]
+    idle_scheduler_snapshot = {
+        "dma_valid_o": 0,
+        "dma_write_weights_o": 0,
+        "dma_addr_o": 0,
+        "dma_payload_o": [0 for _ in range(max(rows, cols))],
+        "load_vector_en_o": 0,
+        "activation_read_addr_o": 0,
+        "weight_read_addr_o": 0,
+        "compute_en_o": 0,
+        "clear_acc_o": 0,
+        "store_burst_index_o": 0,
+    }
 
     tile_snapshots_by_index: List[List[Dict[str, object]]] = []
     for tile_index in range(sanitized_tile_count):
         tile_steps = []
-        for scheduler_snapshot, tile_enable_mask in zip(scheduler_snapshots, tile_enable_masks):
+        for step_index, tile_enable_mask in enumerate(tile_enable_masks):
+            scheduler_snapshot = (
+                scheduler_snapshots[step_index - 1]
+                if step_index > 0
+                else idle_scheduler_snapshot
+            )
             tile_enabled = bool(tile_enable_mask[tile_index])
             dma_slot_addr = int(scheduler_snapshot["dma_addr_o"])
             activation_slot_addr = int(scheduler_snapshot["activation_read_addr_o"])
@@ -429,12 +453,27 @@ def top_npu_reference(
             tile_snapshot = tile_snapshots_by_index[tile_index][step_index]
             psums.extend([int(value) for value in tile_snapshot["psums_o"]])
             valids.extend([int(value) for value in tile_snapshot["valids_o"]])
+        store_payload, store_valid_mask = _store_segment_payload(
+            psums=psums,
+            tile_enable_mask=tile_enable_masks[step_index],
+            rows=rows,
+            cols=cols,
+            burst_index=int(scheduler_snapshot.get("store_burst_index_o", 0)),
+        )
 
         snapshots.append(
             {
                 "scheduler_state_o": scheduler_snapshot["state_o"],
                 "busy_o": scheduler_snapshot["busy_o"],
                 "done_o": scheduler_snapshot["done_o"],
+                "result_write_valid_o": scheduler_snapshot["store_results_en_o"],
+                "result_write_addr_o": scheduler_snapshot["result_write_addr_o"],
+                "result_write_payload_o": (
+                    store_payload if int(scheduler_snapshot["store_results_en_o"]) else [0 for _ in psums]
+                ),
+                "result_write_valid_mask_o": (
+                    store_valid_mask if int(scheduler_snapshot["store_results_en_o"]) else [0 for _ in valids]
+                ),
                 "psums_o": psums,
                 "valids_o": valids,
             }
@@ -589,6 +628,9 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                 or observed["load_vector_en_o"] != expected["load_vector_en_o"]
                 or observed["activation_read_addr_o"] != expected["activation_read_addr_o"]
                 or observed["weight_read_addr_o"] != expected["weight_read_addr_o"]
+                or observed["store_results_en_o"] != expected["store_results_en_o"]
+                or observed["result_write_addr_o"] != expected["result_write_addr_o"]
+                or observed["store_burst_index_o"] != expected["store_burst_index_o"]
                 or observed["compute_en_o"] != expected["compute_en_o"]
                 or observed["clear_acc_o"] != expected["clear_acc_o"]
             ):
@@ -599,13 +641,17 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{expected['dma_valid_o']}, {expected['dma_write_weights_o']}, "
                     f"{expected['dma_addr_o']}, {expected['dma_payload_o']}, "
                     f"{expected['load_vector_en_o']}, {expected['activation_read_addr_o']}, "
-                    f"{expected['weight_read_addr_o']}, {expected['compute_en_o']}, "
+                    f"{expected['weight_read_addr_o']}, {expected['store_results_en_o']}, "
+                    f"{expected['result_write_addr_o']}, {expected['store_burst_index_o']}, "
+                    f"{expected['compute_en_o']}, "
                     f"{expected['clear_acc_o']}), got "
                     f"({observed['state_o']}, {observed['busy_o']}, {observed['done_o']}, "
                     f"{observed['dma_valid_o']}, {observed['dma_write_weights_o']}, "
                     f"{observed['dma_addr_o']}, {observed['dma_payload_o']}, "
                     f"{observed['load_vector_en_o']}, {observed['activation_read_addr_o']}, "
-                    f"{observed['weight_read_addr_o']}, {observed['compute_en_o']}, "
+                    f"{observed['weight_read_addr_o']}, {observed['store_results_en_o']}, "
+                    f"{observed['result_write_addr_o']}, {observed['store_burst_index_o']}, "
+                    f"{observed['compute_en_o']}, "
                     f"{observed['clear_acc_o']})"
                 )
 
@@ -655,6 +701,10 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                 observed["scheduler_state_o"] != expected["scheduler_state_o"]
                 or observed["busy_o"] != expected["busy_o"]
                 or observed["done_o"] != expected["done_o"]
+                or observed["result_write_valid_o"] != expected["result_write_valid_o"]
+                or observed["result_write_addr_o"] != expected["result_write_addr_o"]
+                or observed["result_write_payload_o"] != expected["result_write_payload_o"]
+                or observed["result_write_valid_mask_o"] != expected["result_write_valid_mask_o"]
                 or observed["psums_o"] != expected["psums_o"]
                 or observed["valids_o"] != expected["valids_o"]
             ):
@@ -662,10 +712,16 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     "top_npu/"
                     f"{case['name']}/step_{step_idx}: expected "
                     f"({expected['scheduler_state_o']}, {expected['busy_o']}, "
-                    f"{expected['done_o']}, {expected['psums_o']}, "
+                    f"{expected['done_o']}, {expected['result_write_valid_o']}, "
+                    f"{expected['result_write_addr_o']}, {expected['result_write_payload_o']}, "
+                    f"{expected['result_write_valid_mask_o']}, "
+                    f"{expected['psums_o']}, "
                     f"{expected['valids_o']}), got "
                     f"({observed['scheduler_state_o']}, {observed['busy_o']}, "
-                    f"{observed['done_o']}, {observed['psums_o']}, "
+                    f"{observed['done_o']}, {observed['result_write_valid_o']}, "
+                    f"{observed['result_write_addr_o']}, {observed['result_write_payload_o']}, "
+                    f"{observed['result_write_valid_mask_o']}, "
+                    f"{observed['psums_o']}, "
                     f"{observed['valids_o']})"
                 )
 
@@ -694,16 +750,23 @@ def _scheduler_next_context(
     slot_index: int,
     load_index: int,
     compute_index: int,
+    store_index: int,
     step: Dict[str, object],
+    rows: int,
     program_slot_count: int,
     program_load_iterations: int,
     program_compute_iterations: int,
     program_clear_on_done: bool,
-) -> Tuple[int, int, int, int, int, int, int, bool]:
+) -> Tuple[int, int, int, int, int, int, int, int, bool]:
+    store_burst_count = _sanitize_store_burst_count(
+        step.get("store_burst_count_i", rows),
+        rows=rows,
+    )
     if state == SCHEDULER_IDLE:
         if bool(step["start_i"]):
             return (
                 SCHEDULER_DMA_ACT,
+                0,
                 0,
                 0,
                 0,
@@ -717,6 +780,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            store_index,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -728,6 +792,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            store_index,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -740,6 +805,7 @@ def _scheduler_next_context(
                 slot_index + 1,
                 load_index,
                 compute_index,
+                store_index,
                 program_slot_count,
                 program_load_iterations,
                 program_compute_iterations,
@@ -750,6 +816,7 @@ def _scheduler_next_context(
             slot_index,
             0,
             compute_index,
+            0,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -762,6 +829,7 @@ def _scheduler_next_context(
                 slot_index,
                 load_index + 1,
                 compute_index,
+                store_index,
                 program_slot_count,
                 program_load_iterations,
                 program_compute_iterations,
@@ -772,6 +840,7 @@ def _scheduler_next_context(
                 SCHEDULER_COMPUTE,
                 slot_index,
                 load_index,
+                0,
                 0,
                 program_slot_count,
                 program_load_iterations,
@@ -784,6 +853,7 @@ def _scheduler_next_context(
                 slot_index,
                 load_index,
                 compute_index,
+                0,
                 program_slot_count,
                 program_load_iterations,
                 program_compute_iterations,
@@ -794,6 +864,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            0,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -806,6 +877,31 @@ def _scheduler_next_context(
                 slot_index,
                 load_index,
                 compute_index + 1,
+                0,
+                program_slot_count,
+                program_load_iterations,
+                program_compute_iterations,
+                program_clear_on_done,
+            )
+        return (
+            SCHEDULER_STORE,
+            slot_index,
+            load_index,
+            compute_index,
+            0,
+            program_slot_count,
+            program_load_iterations,
+            program_compute_iterations,
+            program_clear_on_done,
+        )
+    if state == SCHEDULER_STORE:
+        if store_index + 1 < store_burst_count:
+            return (
+                SCHEDULER_STORE,
+                slot_index,
+                load_index,
+                compute_index,
+                store_index + 1,
                 program_slot_count,
                 program_load_iterations,
                 program_compute_iterations,
@@ -817,6 +913,7 @@ def _scheduler_next_context(
                 slot_index,
                 load_index,
                 compute_index,
+                0,
                 program_slot_count,
                 program_load_iterations,
                 program_compute_iterations,
@@ -827,6 +924,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            0,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -838,6 +936,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            0,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -849,6 +948,7 @@ def _scheduler_next_context(
             slot_index,
             load_index,
             compute_index,
+            0,
             program_slot_count,
             program_load_iterations,
             program_compute_iterations,
@@ -859,6 +959,7 @@ def _scheduler_next_context(
         slot_index,
         load_index,
         compute_index,
+        0,
         program_slot_count,
         program_load_iterations,
         program_compute_iterations,
@@ -873,9 +974,11 @@ def _scheduler_outputs(
     cols: int,
     slot_index: int,
     load_index: int,
+    store_index: int,
     program_slot_count: int,
 ) -> Dict[str, object]:
     max_dim = max(rows, cols)
+    slot_stride = _sanitize_stride(step.get("slot_stride_i", 1))
     snapshot = {
         "state_o": state,
         "busy_o": int(state not in (SCHEDULER_IDLE, SCHEDULER_DONE)),
@@ -887,31 +990,58 @@ def _scheduler_outputs(
         "load_vector_en_o": 0,
         "activation_read_addr_o": 0,
         "weight_read_addr_o": 0,
+        "store_results_en_o": 0,
+        "result_write_addr_o": 0,
+        "store_burst_index_o": 0,
         "compute_en_o": 0,
         "clear_acc_o": 0,
     }
 
     if state == SCHEDULER_DMA_ACT:
         snapshot["dma_valid_o"] = 1
-        snapshot["dma_addr_o"] = slot_index
+        snapshot["dma_addr_o"] = _descriptor_addr(
+            base_addr=step.get("activation_base_addr_i", 0),
+            index=slot_index,
+            stride=slot_stride,
+        )
         snapshot["dma_payload_o"] = _select_activation_slot(step=step, slot_index=slot_index, width=max_dim)
     elif state == SCHEDULER_DMA_WGT:
         snapshot["dma_valid_o"] = 1
         snapshot["dma_write_weights_o"] = 1
-        snapshot["dma_addr_o"] = slot_index
+        snapshot["dma_addr_o"] = _descriptor_addr(
+            base_addr=step.get("weight_base_addr_i", 0),
+            index=slot_index,
+            stride=slot_stride,
+        )
         snapshot["dma_payload_o"] = _select_weight_slot(step=step, slot_index=slot_index, width=max_dim)
     elif state == SCHEDULER_LOAD:
         snapshot["load_vector_en_o"] = 1
-        snapshot["activation_read_addr_o"] = _effective_load_addr(
-            load_index=load_index,
-            program_slot_count=program_slot_count,
+        snapshot["activation_read_addr_o"] = _descriptor_addr(
+            base_addr=step.get("activation_base_addr_i", 0),
+            index=_effective_load_addr(
+                load_index=load_index,
+                program_slot_count=program_slot_count,
+            ),
+            stride=slot_stride,
         )
-        snapshot["weight_read_addr_o"] = _effective_load_addr(
-            load_index=load_index,
-            program_slot_count=program_slot_count,
+        snapshot["weight_read_addr_o"] = _descriptor_addr(
+            base_addr=step.get("weight_base_addr_i", 0),
+            index=_effective_load_addr(
+                load_index=load_index,
+                program_slot_count=program_slot_count,
+            ),
+            stride=slot_stride,
         )
     elif state == SCHEDULER_COMPUTE:
         snapshot["compute_en_o"] = 1
+    elif state == SCHEDULER_STORE:
+        snapshot["store_results_en_o"] = 1
+        snapshot["result_write_addr_o"] = _descriptor_addr(
+            base_addr=step.get("result_base_addr_i", 0),
+            index=store_index,
+            stride=_sanitize_stride(step.get("store_stride_i", 1)),
+        )
+        snapshot["store_burst_index_o"] = store_index
     elif state == SCHEDULER_CLEAR:
         snapshot["clear_acc_o"] = 1
 
@@ -968,6 +1098,24 @@ def _sanitize_bank_index(raw_value: object, bank_count: int) -> int:
     return int(raw_value) % bank_count
 
 
+def _sanitize_stride(raw_value: object) -> int:
+    value = int(raw_value)
+    if value <= 0:
+        return 1
+    return min(7, value)
+
+
+def _sanitize_store_burst_count(raw_value: object, rows: int) -> int:
+    value = int(raw_value)
+    if value <= 0:
+        return 1
+    return min(max(1, rows), value)
+
+
+def _descriptor_addr(base_addr: object, index: int, stride: int) -> int:
+    return int(base_addr) + (int(index) * int(stride))
+
+
 def _slot_bank_select(slot_addr: int, bank_count: int = 2) -> int:
     return _sanitize_bank_index(slot_addr, bank_count)
 
@@ -994,3 +1142,31 @@ def _effective_load_addr(load_index: int, program_slot_count: int) -> int:
     if program_slot_count <= 1:
         return 0
     return min(load_index, program_slot_count - 1)
+
+
+def _store_segment_payload(
+    psums: List[int],
+    tile_enable_mask: List[int],
+    rows: int,
+    cols: int,
+    burst_index: int,
+) -> Tuple[List[int], List[int]]:
+    payload = [0 for _ in psums]
+    valid_mask = [0 for _ in psums]
+    if rows <= 0 or cols <= 0:
+        return payload, valid_mask
+
+    selected_row = max(0, min(int(burst_index), rows - 1))
+    tile_stride = rows * cols
+    for tile_index, tile_enabled in enumerate(tile_enable_mask):
+        if not tile_enabled:
+            continue
+        tile_base = tile_index * tile_stride
+        row_base = tile_base + (selected_row * cols)
+        for col_index in range(cols):
+            lane_index = row_base + col_index
+            if lane_index >= len(psums):
+                continue
+            payload[lane_index] = int(psums[lane_index])
+            valid_mask[lane_index] = 1
+    return payload, valid_mask

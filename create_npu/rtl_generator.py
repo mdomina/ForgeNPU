@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from create_npu.golden_model import scheduler_reference, top_npu_reference
 from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle, RequirementSpec
 
 
@@ -1447,6 +1448,12 @@ def _scheduler_template(operand_width: int) -> str:
   input  logic [1:0] slot_count_i,
   input  logic [1:0] load_iterations_i,
   input  logic [3:0] compute_iterations_i,
+  input  logic [ADDR_WIDTH-1:0] activation_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] weight_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] result_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] slot_stride_i,
+  input  logic [ADDR_WIDTH-1:0] store_stride_i,
+  input  logic [1:0] store_burst_count_i,
   input  logic clear_on_done_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i,
@@ -1459,6 +1466,9 @@ def _scheduler_template(operand_width: int) -> str:
   output logic load_vector_en_o,
   output logic [ADDR_WIDTH-1:0] activation_read_addr_o,
   output logic [ADDR_WIDTH-1:0] weight_read_addr_o,
+  output logic store_results_en_o,
+  output logic [ADDR_WIDTH-1:0] result_write_addr_o,
+  output logic [ADDR_WIDTH-1:0] store_burst_index_o,
   output logic compute_en_o,
   output logic clear_acc_o,
   output logic busy_o,
@@ -1470,8 +1480,9 @@ def _scheduler_template(operand_width: int) -> str:
   localparam logic [3:0] S_DMA_WGT = 4'd2;
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
-  localparam logic [3:0] S_CLEAR = 4'd5;
-  localparam logic [3:0] S_DONE = 4'd6;
+  localparam logic [3:0] S_STORE = 4'd5;
+  localparam logic [3:0] S_CLEAR = 4'd6;
+  localparam logic [3:0] S_DONE = 4'd7;
   localparam logic [ADDR_WIDTH-1:0] ADDR_ZERO = '0;
 
   logic [3:0] state_q;
@@ -1480,6 +1491,8 @@ def _scheduler_template(operand_width: int) -> str:
   logic [ADDR_WIDTH-1:0] slot_index_d;
   logic [ADDR_WIDTH-1:0] load_index_q;
   logic [ADDR_WIDTH-1:0] load_index_d;
+  logic [ADDR_WIDTH-1:0] store_index_q;
+  logic [ADDR_WIDTH-1:0] store_index_d;
   logic [3:0] compute_count_q;
   logic [3:0] compute_count_d;
   logic [1:0] program_slot_count_q;
@@ -1492,6 +1505,19 @@ def _scheduler_template(operand_width: int) -> str:
   logic program_clear_on_done_d;
   logic [1:0] slot_count_sanitized;
   logic [1:0] load_iterations_sanitized;
+  logic [1:0] store_burst_count_sanitized;
+  logic [ADDR_WIDTH-1:0] slot_stride_sanitized;
+  logic [ADDR_WIDTH-1:0] store_stride_sanitized;
+
+  function automatic logic [ADDR_WIDTH-1:0] descriptor_addr(
+    input logic [ADDR_WIDTH-1:0] base_addr,
+    input logic [ADDR_WIDTH-1:0] index_value,
+    input logic [ADDR_WIDTH-1:0] stride_value
+  );
+    begin
+      descriptor_addr = base_addr + (index_value * stride_value);
+    end
+  endfunction
 
   always_comb begin
     if (slot_count_i == 2'd0) begin
@@ -1514,9 +1540,38 @@ def _scheduler_template(operand_width: int) -> str:
   end
 
   always_comb begin
+    if (store_burst_count_i == 2'd0) begin
+      store_burst_count_sanitized = 2'd1;
+    end else if ((ROWS <= 1) && (store_burst_count_i > 2'd1)) begin
+      store_burst_count_sanitized = 2'd1;
+    end else if (store_burst_count_i > 2'd2) begin
+      store_burst_count_sanitized = 2'd2;
+    end else begin
+      store_burst_count_sanitized = store_burst_count_i;
+    end
+  end
+
+  always_comb begin
+    if (slot_stride_i == ADDR_ZERO) begin
+      slot_stride_sanitized = 'd1;
+    end else begin
+      slot_stride_sanitized = slot_stride_i;
+    end
+  end
+
+  always_comb begin
+    if (store_stride_i == ADDR_ZERO) begin
+      store_stride_sanitized = 'd1;
+    end else begin
+      store_stride_sanitized = store_stride_i;
+    end
+  end
+
+  always_comb begin
     state_d = state_q;
     slot_index_d = slot_index_q;
     load_index_d = load_index_q;
+    store_index_d = store_index_q;
     compute_count_d = compute_count_q;
     program_slot_count_d = program_slot_count_q;
     program_load_iterations_d = program_load_iterations_q;
@@ -1529,6 +1584,7 @@ def _scheduler_template(operand_width: int) -> str:
           state_d = S_DMA_ACT;
           slot_index_d = ADDR_ZERO;
           load_index_d = ADDR_ZERO;
+          store_index_d = ADDR_ZERO;
           compute_count_d = '0;
           program_slot_count_d = slot_count_sanitized;
           program_load_iterations_d = load_iterations_sanitized;
@@ -1545,6 +1601,7 @@ def _scheduler_template(operand_width: int) -> str:
           state_d = S_DMA_ACT;
         end else begin
           load_index_d = ADDR_ZERO;
+          store_index_d = ADDR_ZERO;
           state_d = S_LOAD;
         end
       end
@@ -1554,6 +1611,7 @@ def _scheduler_template(operand_width: int) -> str:
           state_d = S_LOAD;
         end else if (program_compute_iterations_q != 4'd0) begin
           compute_count_d = '0;
+          store_index_d = ADDR_ZERO;
           state_d = S_COMPUTE;
         end else if (program_clear_on_done_q) begin
           state_d = S_CLEAR;
@@ -1565,14 +1623,31 @@ def _scheduler_template(operand_width: int) -> str:
         if ((compute_count_q + 1'b1) < program_compute_iterations_q) begin
           compute_count_d = compute_count_q + 1'b1;
           state_d = S_COMPUTE;
+        end else begin
+          store_index_d = ADDR_ZERO;
+          state_d = S_STORE;
+        end
+      end
+      S_STORE: begin
+        if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
+          store_index_d = store_index_q + 1'b1;
+          state_d = S_STORE;
         end else if (program_clear_on_done_q) begin
+          store_index_d = ADDR_ZERO;
           state_d = S_CLEAR;
         end else begin
+          store_index_d = ADDR_ZERO;
           state_d = S_DONE;
         end
       end
-      S_CLEAR: state_d = S_DONE;
-      S_DONE: state_d = S_IDLE;
+      S_CLEAR: begin
+        store_index_d = ADDR_ZERO;
+        state_d = S_DONE;
+      end
+      S_DONE: begin
+        store_index_d = ADDR_ZERO;
+        state_d = S_IDLE;
+      end
       default: state_d = S_IDLE;
     endcase
   end
@@ -1582,6 +1657,7 @@ def _scheduler_template(operand_width: int) -> str:
       state_q <= S_IDLE;
       slot_index_q <= ADDR_ZERO;
       load_index_q <= ADDR_ZERO;
+      store_index_q <= ADDR_ZERO;
       compute_count_q <= '0;
       program_slot_count_q <= 2'd2;
       program_load_iterations_q <= 2'd2;
@@ -1591,6 +1667,7 @@ def _scheduler_template(operand_width: int) -> str:
       state_q <= state_d;
       slot_index_q <= slot_index_d;
       load_index_q <= load_index_d;
+      store_index_q <= store_index_d;
       compute_count_q <= compute_count_d;
       program_slot_count_q <= program_slot_count_d;
       program_load_iterations_q <= program_load_iterations_d;
@@ -1607,6 +1684,9 @@ def _scheduler_template(operand_width: int) -> str:
     load_vector_en_o = 1'b0;
     activation_read_addr_o = ADDR_ZERO;
     weight_read_addr_o = ADDR_ZERO;
+    store_results_en_o = 1'b0;
+    result_write_addr_o = ADDR_ZERO;
+    store_burst_index_o = ADDR_ZERO;
     compute_en_o = 1'b0;
     clear_acc_o = 1'b0;
     busy_o = (state_q != S_IDLE) && (state_q != S_DONE);
@@ -1616,7 +1696,7 @@ def _scheduler_template(operand_width: int) -> str:
     unique case (state_q)
       S_DMA_ACT: begin
         dma_valid_o = 1'b1;
-        dma_addr_o = slot_index_q;
+        dma_addr_o = descriptor_addr(activation_base_addr_i, slot_index_q, slot_stride_sanitized);
         if (slot_index_q == ADDR_ZERO) begin
           dma_payload_o[0 +: ROWS*DATA_WIDTH] = activation_slot0_i;
         end else begin
@@ -1626,7 +1706,7 @@ def _scheduler_template(operand_width: int) -> str:
       S_DMA_WGT: begin
         dma_valid_o = 1'b1;
         dma_write_weights_o = 1'b1;
-        dma_addr_o = slot_index_q;
+        dma_addr_o = descriptor_addr(weight_base_addr_i, slot_index_q, slot_stride_sanitized);
         if (slot_index_q == ADDR_ZERO) begin
           dma_payload_o[0 +: COLS*DATA_WIDTH] = weight_slot0_i;
         end else begin
@@ -1636,15 +1716,28 @@ def _scheduler_template(operand_width: int) -> str:
       S_LOAD: begin
         load_vector_en_o = 1'b1;
         if (program_slot_count_q == 2'd1) begin
-          activation_read_addr_o = ADDR_ZERO;
-          weight_read_addr_o = ADDR_ZERO;
+          activation_read_addr_o = activation_base_addr_i;
+          weight_read_addr_o = weight_base_addr_i;
         end else begin
-          activation_read_addr_o = load_index_q;
-          weight_read_addr_o = load_index_q;
+          activation_read_addr_o = descriptor_addr(
+            activation_base_addr_i,
+            load_index_q,
+            slot_stride_sanitized
+          );
+          weight_read_addr_o = descriptor_addr(
+            weight_base_addr_i,
+            load_index_q,
+            slot_stride_sanitized
+          );
         end
       end
       S_COMPUTE: begin
         compute_en_o = 1'b1;
+      end
+      S_STORE: begin
+        store_results_en_o = 1'b1;
+        result_write_addr_o = descriptor_addr(result_base_addr_i, store_index_q, store_stride_sanitized);
+        store_burst_index_o = store_index_q;
       end
       S_CLEAR: begin
         clear_acc_o = 1'b1;
@@ -1658,6 +1751,8 @@ endmodule
 
 
 def _scheduler_tb_template(operand_width: int) -> str:
+    primary_case = _scheduler_sequence_case()
+    short_case = _scheduler_short_sequence_case()
     return f"""module scheduler_tb;
   localparam int DATA_WIDTH = {operand_width};
   localparam int ROWS = 2;
@@ -1670,8 +1765,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
   localparam logic [3:0] S_DMA_WGT = 4'd2;
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
-  localparam logic [3:0] S_CLEAR = 4'd5;
-  localparam logic [3:0] S_DONE = 4'd6;
+  localparam logic [3:0] S_STORE = 4'd5;
+  localparam logic [3:0] S_CLEAR = 4'd6;
+  localparam logic [3:0] S_DONE = 4'd7;
 
   logic clk;
   logic rst_n;
@@ -1679,6 +1775,12 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic [1:0] slot_count_i;
   logic [1:0] load_iterations_i;
   logic [3:0] compute_iterations_i;
+  logic [ADDR_WIDTH-1:0] activation_base_addr_i;
+  logic [ADDR_WIDTH-1:0] weight_base_addr_i;
+  logic [ADDR_WIDTH-1:0] result_base_addr_i;
+  logic [ADDR_WIDTH-1:0] slot_stride_i;
+  logic [ADDR_WIDTH-1:0] store_stride_i;
+  logic [1:0] store_burst_count_i;
   logic clear_on_done_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i;
@@ -1691,6 +1793,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic load_vector_en_o;
   logic [ADDR_WIDTH-1:0] activation_read_addr_o;
   logic [ADDR_WIDTH-1:0] weight_read_addr_o;
+  logic store_results_en_o;
+  logic [ADDR_WIDTH-1:0] result_write_addr_o;
+  logic [ADDR_WIDTH-1:0] store_burst_index_o;
   logic compute_en_o;
   logic clear_acc_o;
   logic busy_o;
@@ -1709,6 +1814,12 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .slot_count_i(slot_count_i),
     .load_iterations_i(load_iterations_i),
     .compute_iterations_i(compute_iterations_i),
+    .activation_base_addr_i(activation_base_addr_i),
+    .weight_base_addr_i(weight_base_addr_i),
+    .result_base_addr_i(result_base_addr_i),
+    .slot_stride_i(slot_stride_i),
+    .store_stride_i(store_stride_i),
+    .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
@@ -1721,6 +1832,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .load_vector_en_o(load_vector_en_o),
     .activation_read_addr_o(activation_read_addr_o),
     .weight_read_addr_o(weight_read_addr_o),
+    .store_results_en_o(store_results_en_o),
+    .result_write_addr_o(result_write_addr_o),
+    .store_burst_index_o(store_burst_index_o),
     .compute_en_o(compute_en_o),
     .clear_acc_o(clear_acc_o),
     .busy_o(busy_o),
@@ -1743,6 +1857,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
     input logic expected_load_vector,
     input integer expected_activation_read_addr,
     input integer expected_weight_read_addr,
+    input logic expected_store,
+    input integer expected_result_write_addr,
+    input integer expected_store_burst_index,
     input logic expected_compute,
     input logic expected_clear
   );
@@ -1761,6 +1878,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
           load_vector_en_o !== expected_load_vector ||
           activation_read_addr_o !== expected_activation_read_addr[ADDR_WIDTH-1:0] ||
           weight_read_addr_o !== expected_weight_read_addr[ADDR_WIDTH-1:0] ||
+          store_results_en_o !== expected_store ||
+          result_write_addr_o !== expected_result_write_addr[ADDR_WIDTH-1:0] ||
+          store_burst_index_o !== expected_store_burst_index[ADDR_WIDTH-1:0] ||
           compute_en_o !== expected_compute ||
           clear_acc_o !== expected_clear) begin
         $fatal(1, "scheduler_tb failed");
@@ -1776,6 +1896,12 @@ def _scheduler_tb_template(operand_width: int) -> str:
     slot_count_i = 2'd2;
     load_iterations_i = 2'd2;
     compute_iterations_i = 4'd2;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b1;
     activation_slot0_i = '0;
     activation_slot1_i = '0;
@@ -1792,30 +1918,20 @@ def _scheduler_tb_template(operand_width: int) -> str:
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
-    step_and_expect(1'b1, S_DMA_ACT, 1'b1, 1'b0, 1'b1, 1'b0, 0, 1, 2, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 1'b1, 1'b1, 0, 5, 6, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_DMA_ACT, 1'b1, 1'b0, 1'b1, 1'b0, 1, 3, 4, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 1'b1, 1'b1, 1, 7, 8, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b1, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b1, 1, 1, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b1, 1'b0);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b1, 1'b0);
-    step_and_expect(1'b0, S_CLEAR, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b0, 1'b1);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b0, 1'b0);
+{_render_scheduler_tb_steps(primary_case)}
 
     slot_count_i = 2'd1;
     load_iterations_i = 2'd2;
     compute_iterations_i = 4'd1;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b0;
 
-    step_and_expect(1'b1, S_DMA_ACT, 1'b1, 1'b0, 1'b1, 1'b0, 0, 1, 2, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 1'b1, 1'b1, 0, 5, 6, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b1, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b1, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b1, 1'b0);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b0, 1'b0);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 1'b0, 1'b0, 0, 0, 0, 1'b0, 0, 0, 1'b0, 1'b0);
+{_render_scheduler_tb_steps(short_case)}
 
     $display("scheduler_tb passed");
     $finish;
@@ -1844,6 +1960,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   input  logic [1:0] slot_count_i,
   input  logic [1:0] load_iterations_i,
   input  logic [3:0] compute_iterations_i,
+  input  logic [ADDR_WIDTH-1:0] activation_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] weight_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] result_base_addr_i,
+  input  logic [ADDR_WIDTH-1:0] slot_stride_i,
+  input  logic [ADDR_WIDTH-1:0] store_stride_i,
+  input  logic [1:0] store_burst_count_i,
   input  logic clear_on_done_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i,
@@ -1852,6 +1974,10 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   output logic busy_o,
   output logic done_o,
   output logic [3:0] scheduler_state_o,
+  output logic result_write_valid_o,
+  output logic [ADDR_WIDTH-1:0] result_write_addr_o,
+  output logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] result_write_payload_o,
+  output logic [TOTAL_PE_COUNT-1:0] result_write_valid_mask_o,
   output logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] psums_o,
   output logic [TOTAL_PE_COUNT-1:0] valids_o
 );
@@ -1862,6 +1988,9 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   logic load_vector_en;
   logic [ADDR_WIDTH-1:0] activation_read_addr;
   logic [ADDR_WIDTH-1:0] weight_read_addr;
+  logic store_results_en;
+  logic [ADDR_WIDTH-1:0] result_write_addr;
+  logic [ADDR_WIDTH-1:0] store_burst_index;
   logic dma_bank_select;
   logic activation_read_bank_select;
   logic weight_read_bank_select;
@@ -1874,6 +2003,9 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
   logic [TILE_COUNT-1:0] dma_done_unused;
   logic [TILE_COUNT-1:0] dma_busy_unused;
   genvar tile_idx;
+  genvar store_tile_idx;
+  genvar store_row_idx;
+  genvar store_col_idx;
 
   scheduler #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -1887,6 +2019,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
     .slot_count_i(slot_count_i),
     .load_iterations_i(load_iterations_i),
     .compute_iterations_i(compute_iterations_i),
+    .activation_base_addr_i(activation_base_addr_i),
+    .weight_base_addr_i(weight_base_addr_i),
+    .result_base_addr_i(result_base_addr_i),
+    .slot_stride_i(slot_stride_i),
+    .store_stride_i(store_stride_i),
+    .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
@@ -1899,12 +2037,18 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
     .load_vector_en_o(load_vector_en),
     .activation_read_addr_o(activation_read_addr),
     .weight_read_addr_o(weight_read_addr),
+    .store_results_en_o(store_results_en),
+    .result_write_addr_o(result_write_addr),
+    .store_burst_index_o(store_burst_index),
     .compute_en_o(compute_en),
     .clear_acc_o(clear_acc),
     .busy_o(busy_o),
     .done_o(done_o),
     .state_o(scheduler_state_o)
   );
+
+  assign result_write_valid_o = store_results_en;
+  assign result_write_addr_o = result_write_addr;
 
   assign dma_bank_select = dma_addr[0];
   assign dma_local_addr = dma_addr >> 1;
@@ -1944,18 +2088,40 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_tile_count: int) 
         .valids_o(valids_o[(tile_idx * PE_COUNT) +: PE_COUNT])
       );
     end
+    for (store_tile_idx = 0; store_tile_idx < TILE_COUNT; store_tile_idx = store_tile_idx + 1) begin : gen_store_tiles
+      for (store_row_idx = 0; store_row_idx < ROWS; store_row_idx = store_row_idx + 1) begin : gen_store_rows
+        for (store_col_idx = 0; store_col_idx < COLS; store_col_idx = store_col_idx + 1) begin : gen_store_cols
+          localparam int STORE_LANE_IDX = (store_tile_idx * PE_COUNT) + (store_row_idx * COLS) + store_col_idx;
+          localparam logic [ADDR_WIDTH-1:0] STORE_ROW_ADDR = store_row_idx[ADDR_WIDTH-1:0];
+          assign result_write_valid_mask_o[STORE_LANE_IDX] =
+            store_results_en &&
+            tile_enable_i[store_tile_idx] &&
+            (store_burst_index == STORE_ROW_ADDR);
+          assign result_write_payload_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] =
+            (
+              store_results_en &&
+              tile_enable_i[store_tile_idx] &&
+              (store_burst_index == STORE_ROW_ADDR)
+            ) ? psums_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] : '0;
+        end
+      end
+    end
   endgenerate
 endmodule
 """
 
 
 def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
+    primary_case = _top_npu_sequence_case()
+    short_case = _top_npu_short_sequence_case()
+    dual_tile_case = _top_npu_dual_tile_sequence_case()
     return f"""module top_npu_tb;
   localparam int DATA_WIDTH = {operand_width};
   localparam int ACC_WIDTH = {acc_width};
   localparam int ROWS = 2;
   localparam int COLS = 2;
   localparam int DEPTH = 4;
+  localparam int ADDR_WIDTH = $clog2(DEPTH);
   localparam int TILE_COUNT = 2;
   localparam int PE_COUNT = ROWS * COLS;
   localparam int TOTAL_PE_COUNT = TILE_COUNT * PE_COUNT;
@@ -1964,8 +2130,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   localparam logic [3:0] S_DMA_WGT = 4'd2;
   localparam logic [3:0] S_LOAD = 4'd3;
   localparam logic [3:0] S_COMPUTE = 4'd4;
-  localparam logic [3:0] S_CLEAR = 4'd5;
-  localparam logic [3:0] S_DONE = 4'd6;
+  localparam logic [3:0] S_STORE = 4'd5;
+  localparam logic [3:0] S_CLEAR = 4'd6;
+  localparam logic [3:0] S_DONE = 4'd7;
 
   logic clk;
   logic rst_n;
@@ -1974,6 +2141,12 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   logic [1:0] slot_count_i;
   logic [1:0] load_iterations_i;
   logic [3:0] compute_iterations_i;
+  logic [ADDR_WIDTH-1:0] activation_base_addr_i;
+  logic [ADDR_WIDTH-1:0] weight_base_addr_i;
+  logic [ADDR_WIDTH-1:0] result_base_addr_i;
+  logic [ADDR_WIDTH-1:0] slot_stride_i;
+  logic [ADDR_WIDTH-1:0] store_stride_i;
+  logic [1:0] store_burst_count_i;
   logic clear_on_done_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i;
@@ -1982,6 +2155,10 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   logic busy_o;
   logic done_o;
   logic [3:0] scheduler_state_o;
+  logic result_write_valid_o;
+  logic [ADDR_WIDTH-1:0] result_write_addr_o;
+  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] result_write_payload_o;
+  logic [TOTAL_PE_COUNT-1:0] result_write_valid_mask_o;
   logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] psums_o;
   logic [TOTAL_PE_COUNT-1:0] valids_o;
 
@@ -2000,6 +2177,12 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     .slot_count_i(slot_count_i),
     .load_iterations_i(load_iterations_i),
     .compute_iterations_i(compute_iterations_i),
+    .activation_base_addr_i(activation_base_addr_i),
+    .weight_base_addr_i(weight_base_addr_i),
+    .result_base_addr_i(result_base_addr_i),
+    .slot_stride_i(slot_stride_i),
+    .store_stride_i(store_stride_i),
+    .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
@@ -2008,6 +2191,10 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     .busy_o(busy_o),
     .done_o(done_o),
     .scheduler_state_o(scheduler_state_o),
+    .result_write_valid_o(result_write_valid_o),
+    .result_write_addr_o(result_write_addr_o),
+    .result_write_payload_o(result_write_payload_o),
+    .result_write_valid_mask_o(result_write_valid_mask_o),
     .psums_o(psums_o),
     .valids_o(valids_o)
   );
@@ -2027,6 +2214,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     input integer t1_p1,
     input integer t1_p2,
     input integer t1_p3,
+    input logic expected_store_valid,
+    input integer expected_store_addr,
+    input logic [TOTAL_PE_COUNT-1:0] expected_store_mask,
     input logic [TOTAL_PE_COUNT-1:0] expected_valids
   );
     begin
@@ -2044,13 +2234,35 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
           $signed(psums_o[5*ACC_WIDTH +: ACC_WIDTH]) !== t1_p1 ||
           $signed(psums_o[6*ACC_WIDTH +: ACC_WIDTH]) !== t1_p2 ||
           $signed(psums_o[7*ACC_WIDTH +: ACC_WIDTH]) !== t1_p3 ||
+          result_write_valid_o !== expected_store_valid ||
+          result_write_addr_o !== expected_store_addr[ADDR_WIDTH-1:0] ||
+          result_write_valid_mask_o !== expected_store_mask ||
+          (expected_store_valid &&
+            ((expected_store_mask[0] && $signed(result_write_payload_o[0 +: ACC_WIDTH]) !== t0_p0) ||
+             (!expected_store_mask[0] && $signed(result_write_payload_o[0 +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[1] && $signed(result_write_payload_o[ACC_WIDTH +: ACC_WIDTH]) !== t0_p1) ||
+             (!expected_store_mask[1] && $signed(result_write_payload_o[ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[2] && $signed(result_write_payload_o[2*ACC_WIDTH +: ACC_WIDTH]) !== t0_p2) ||
+             (!expected_store_mask[2] && $signed(result_write_payload_o[2*ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[3] && $signed(result_write_payload_o[3*ACC_WIDTH +: ACC_WIDTH]) !== t0_p3) ||
+             (!expected_store_mask[3] && $signed(result_write_payload_o[3*ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[4] && $signed(result_write_payload_o[4*ACC_WIDTH +: ACC_WIDTH]) !== t1_p0) ||
+             (!expected_store_mask[4] && $signed(result_write_payload_o[4*ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[5] && $signed(result_write_payload_o[5*ACC_WIDTH +: ACC_WIDTH]) !== t1_p1) ||
+             (!expected_store_mask[5] && $signed(result_write_payload_o[5*ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[6] && $signed(result_write_payload_o[6*ACC_WIDTH +: ACC_WIDTH]) !== t1_p2) ||
+             (!expected_store_mask[6] && $signed(result_write_payload_o[6*ACC_WIDTH +: ACC_WIDTH]) !== 0) ||
+             (expected_store_mask[7] && $signed(result_write_payload_o[7*ACC_WIDTH +: ACC_WIDTH]) !== t1_p3) ||
+             (!expected_store_mask[7] && $signed(result_write_payload_o[7*ACC_WIDTH +: ACC_WIDTH]) !== 0))) ||
           valids_o !== expected_valids) begin
         $fatal(
           1,
-          "top_npu_tb failed: expected state=%0d busy=%0d done=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b got state=%0d busy=%0d done=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b",
+          "top_npu_tb failed: expected state=%0d busy=%0d done=%0d store=%0d addr=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b got state=%0d busy=%0d done=%0d store=%0d addr=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b",
           expected_state,
           expected_busy,
           expected_done,
+          expected_store_valid,
+          expected_store_addr,
           t0_p0,
           t0_p1,
           t0_p2,
@@ -2063,6 +2275,8 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
           scheduler_state_o,
           busy_o,
           done_o,
+          result_write_valid_o,
+          result_write_addr_o,
           $signed(psums_o[0 +: ACC_WIDTH]),
           $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]),
           $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
@@ -2086,6 +2300,12 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     slot_count_i = 2'd2;
     load_iterations_i = 2'd2;
     compute_iterations_i = 4'd2;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b1;
     activation_slot0_i = '0;
     activation_slot1_i = '0;
@@ -2102,17 +2322,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
-    step_and_expect(1'b1, S_DMA_ACT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DMA_ACT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 21, 8, 20, 12, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_CLEAR, 1'b1, 1'b0, 42, 16, 40, 24, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+{_render_top_npu_tb_steps(primary_case)}
 
     rst_n = 1'b0;
     tile_enable_i = 2'b01;
@@ -2121,28 +2331,22 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     slot_count_i = 2'd1;
     load_iterations_i = 2'd2;
     compute_iterations_i = 4'd1;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b0;
 
-    step_and_expect(1'b1, S_DMA_ACT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 0, 0, 0, 0, 0, 0, 0, 8'b0000_1111);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
+{_render_top_npu_tb_steps(short_case)}
 
     rst_n = 1'b0;
     tile_enable_i = 2'b11;
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
-    step_and_expect(1'b1, S_DMA_ACT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DMA_WGT, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_LOAD, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_COMPUTE, 1'b1, 1'b0, 0, 0, 0, 0, 0, 0, 0, 0, 8'b0000_0000);
-    step_and_expect(1'b0, S_DONE, 1'b0, 1'b1, 5, 0, 0, 0, 5, 0, 0, 0, 8'b1111_1111);
-    step_and_expect(1'b0, S_IDLE, 1'b0, 1'b0, 5, 0, 0, 0, 5, 0, 0, 0, 8'b0000_0000);
+{_render_top_npu_tb_steps(dual_tile_case)}
 
     $display("top_npu_tb passed");
     $finish;
@@ -2161,208 +2365,151 @@ def _program_seed_vectors() -> Dict[str, object]:
         "slot_count_i": 2,
         "load_iterations_i": 2,
         "compute_iterations_i": 2,
+        "activation_base_addr_i": 0,
+        "weight_base_addr_i": 0,
+        "result_base_addr_i": 2,
+        "slot_stride_i": 1,
+        "store_stride_i": 1,
+        "store_burst_count_i": 2,
         "clear_on_done_i": 1,
     }
 
 
+def _scheduler_expected(
+    state: int,
+    busy: int,
+    done: int,
+    dma_valid: int = 0,
+    dma_write_weights: int = 0,
+    dma_addr: int = 0,
+    dma_payload: List[int] = None,
+    load_vector_en: int = 0,
+    activation_read_addr: int = 0,
+    weight_read_addr: int = 0,
+    store_results_en: int = 0,
+    result_write_addr: int = 0,
+    store_burst_index: int = 0,
+    compute_en: int = 0,
+    clear_acc: int = 0,
+) -> Dict[str, object]:
+    return {
+        "state_o": state,
+        "busy_o": busy,
+        "done_o": done,
+        "dma_valid_o": dma_valid,
+        "dma_write_weights_o": dma_write_weights,
+        "dma_addr_o": dma_addr,
+        "dma_payload_o": list(dma_payload or [0, 0]),
+        "load_vector_en_o": load_vector_en,
+        "activation_read_addr_o": activation_read_addr,
+        "weight_read_addr_o": weight_read_addr,
+        "store_results_en_o": store_results_en,
+        "result_write_addr_o": result_write_addr,
+        "store_burst_index_o": store_burst_index,
+        "compute_en_o": compute_en,
+        "clear_acc_o": clear_acc,
+    }
+
+
+def _top_npu_expected(
+    state: int,
+    busy: int,
+    done: int,
+    psums: List[int],
+    valids: List[int],
+    store_valid: int = 0,
+    store_addr: int = 0,
+    store_payload: List[int] = None,
+    store_valid_mask: List[int] = None,
+) -> Dict[str, object]:
+    payload = list(psums if store_payload is None else store_payload)
+    return {
+        "scheduler_state_o": state,
+        "busy_o": busy,
+        "done_o": done,
+        "result_write_valid_o": store_valid,
+        "result_write_addr_o": store_addr,
+        "result_write_payload_o": payload,
+        "result_write_valid_mask_o": list(store_valid_mask or [0 for _ in valids]),
+        "psums_o": list(psums),
+        "valids_o": list(valids),
+    }
+
+
+def _format_logic_literal(bits: List[int], width: int) -> str:
+    padded = [int(bit) for bit in bits[:width]] + [0 for _ in range(max(0, width - len(bits)))]
+    return f"{width}'b" + "".join(str(bit) for bit in reversed(padded))
+
+
+def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
+    lines = []
+    for step in case["steps"]:
+        expected = step["expected"]
+        payload = list(expected["dma_payload_o"]) + [0, 0]
+        lines.append(
+            "    step_and_expect("
+            f"1'b{int(step['start_i'])}, "
+            f"4'd{int(expected['state_o'])}, "
+            f"1'b{int(expected['busy_o'])}, "
+            f"1'b{int(expected['done_o'])}, "
+            f"1'b{int(expected['dma_valid_o'])}, "
+            f"1'b{int(expected['dma_write_weights_o'])}, "
+            f"{int(expected['dma_addr_o'])}, "
+            f"{int(payload[0])}, "
+            f"{int(payload[1])}, "
+            f"1'b{int(expected['load_vector_en_o'])}, "
+            f"{int(expected['activation_read_addr_o'])}, "
+            f"{int(expected['weight_read_addr_o'])}, "
+            f"1'b{int(expected['store_results_en_o'])}, "
+            f"{int(expected['result_write_addr_o'])}, "
+            f"{int(expected['store_burst_index_o'])}, "
+            f"1'b{int(expected['compute_en_o'])}, "
+            f"1'b{int(expected['clear_acc_o'])}"
+            ");"
+        )
+    return "\n".join(lines)
+
+
+def _render_top_npu_tb_steps(case: Dict[str, object], total_pe_count: int = 8) -> str:
+    lines = []
+    for step in case["steps"]:
+        expected = step["expected"]
+        psums = list(expected["psums_o"]) + [0 for _ in range(max(0, total_pe_count - len(expected["psums_o"])))]
+        store_mask = _format_logic_literal(expected.get("result_write_valid_mask_o", []), total_pe_count)
+        valids = _format_logic_literal(expected["valids_o"], total_pe_count)
+        lines.append(
+            "    step_and_expect("
+            f"1'b{int(step['start_i'])}, "
+            f"4'd{int(expected['scheduler_state_o'])}, "
+            f"1'b{int(expected['busy_o'])}, "
+            f"1'b{int(expected['done_o'])}, "
+            f"{int(psums[0])}, "
+            f"{int(psums[1])}, "
+            f"{int(psums[2])}, "
+            f"{int(psums[3])}, "
+            f"{int(psums[4])}, "
+            f"{int(psums[5])}, "
+            f"{int(psums[6])}, "
+            f"{int(psums[7])}, "
+            f"1'b{int(expected['result_write_valid_o'])}, "
+            f"{int(expected['result_write_addr_o'])}, "
+            f"{store_mask}, "
+            f"{valids}"
+            ");"
+        )
+    return "\n".join(lines)
+
+
 def _scheduler_sequence_case() -> Dict[str, object]:
     vectors = _program_seed_vectors()
-    sequence = [
-        {
-            "start_i": 1,
-            "expected": {
-                "state_o": 1,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [1, 2],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 2,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 1,
-                "dma_addr_o": 0,
-                "dma_payload_o": [5, 6],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 1,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 1,
-                "dma_payload_o": [3, 4],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 2,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 1,
-                "dma_addr_o": 1,
-                "dma_payload_o": [7, 8],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 1,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 1,
-                "activation_read_addr_o": 1,
-                "weight_read_addr_o": 1,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 4,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 1,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 4,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 1,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 5,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 1,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 6,
-                "busy_o": 0,
-                "done_o": 1,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 0,
-                "busy_o": 0,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-    ]
-
+    starts = [1] + [0 for _ in range(12)]
     steps = []
-    for step in sequence:
+    for start_value in starts:
         payload = dict(vectors)
-        payload["start_i"] = step["start_i"]
-        payload["expected"] = step["expected"]
+        payload["start_i"] = start_value
         steps.append(payload)
+    for payload, expected in zip(steps, scheduler_reference(steps=steps)):
+        payload["expected"] = expected
 
     return {
         "name": "configurable_two_slot_sequence",
@@ -2379,134 +2526,14 @@ def _scheduler_short_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    sequence = [
-        {
-            "start_i": 1,
-            "expected": {
-                "state_o": 1,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [1, 2],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 2,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 1,
-                "dma_write_weights_o": 1,
-                "dma_addr_o": 0,
-                "dma_payload_o": [5, 6],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 1,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 1,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 4,
-                "busy_o": 1,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 1,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 6,
-                "busy_o": 0,
-                "done_o": 1,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "state_o": 0,
-                "busy_o": 0,
-                "done_o": 0,
-                "dma_valid_o": 0,
-                "dma_write_weights_o": 0,
-                "dma_addr_o": 0,
-                "dma_payload_o": [0, 0],
-                "load_vector_en_o": 0,
-                "activation_read_addr_o": 0,
-                "weight_read_addr_o": 0,
-                "compute_en_o": 0,
-                "clear_acc_o": 0,
-            },
-        },
-    ]
-
+    starts = [1] + [0 for _ in range(8)]
     steps = []
-    for step in sequence:
+    for start_value in starts:
         payload = dict(vectors)
-        payload["start_i"] = step["start_i"]
-        payload["expected"] = step["expected"]
+        payload["start_i"] = start_value
         steps.append(payload)
+    for payload, expected in zip(steps, scheduler_reference(steps=steps)):
+        payload["expected"] = expected
 
     return {
         "name": "single_slot_single_compute_no_clear",
@@ -2519,26 +2546,14 @@ def _scheduler_short_sequence_case() -> Dict[str, object]:
 
 def _top_npu_sequence_case() -> Dict[str, object]:
     vectors = _program_seed_vectors()
-    sequence = [
-        {"start_i": 1, "expected": {"scheduler_state_o": 1, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 2, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 1, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 2, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 4, "busy_o": 1, "done_o": 0, "psums_o": [21, 8, 20, 12], "valids_o": [1, 1, 1, 1]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 4, "busy_o": 1, "done_o": 0, "psums_o": [42, 16, 40, 24], "valids_o": [1, 1, 1, 1]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 5, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 6, "busy_o": 0, "done_o": 1, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 0, "busy_o": 0, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-    ]
-
+    starts = [1] + [0 for _ in range(12)]
     steps = []
-    for step in sequence:
+    for start_value in starts:
         payload = dict(vectors)
-        payload["start_i"] = step["start_i"]
-        payload["expected"] = step["expected"]
+        payload["start_i"] = start_value
         steps.append(payload)
+    for payload, expected in zip(steps, top_npu_reference(steps=steps, rows=2, cols=2, depth=4, tile_count=1)):
+        payload["expected"] = expected
 
     return {
         "name": "configurable_two_slot_program",
@@ -2556,22 +2571,14 @@ def _top_npu_short_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    sequence = [
-        {"start_i": 1, "expected": {"scheduler_state_o": 1, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 2, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 3, "busy_o": 1, "done_o": 0, "psums_o": [0, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 4, "busy_o": 1, "done_o": 0, "psums_o": [5, 0, 0, 0], "valids_o": [1, 1, 1, 1]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 6, "busy_o": 0, "done_o": 1, "psums_o": [5, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-        {"start_i": 0, "expected": {"scheduler_state_o": 0, "busy_o": 0, "done_o": 0, "psums_o": [5, 0, 0, 0], "valids_o": [0, 0, 0, 0]}},
-    ]
-
+    starts = [1] + [0 for _ in range(8)]
     steps = []
-    for step in sequence:
+    for start_value in starts:
         payload = dict(vectors)
-        payload["start_i"] = step["start_i"]
-        payload["expected"] = step["expected"]
+        payload["start_i"] = start_value
         steps.append(payload)
+    for payload, expected in zip(steps, top_npu_reference(steps=steps, rows=2, cols=2, depth=4, tile_count=1)):
+        payload["expected"] = expected
 
     return {
         "name": "single_slot_single_compute_top",
@@ -2590,85 +2597,14 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
     vectors["clear_on_done_i"] = 0
-    sequence = [
-        {
-            "start_i": 1,
-            "expected": {
-                "scheduler_state_o": 1,
-                "busy_o": 1,
-                "done_o": 0,
-                "psums_o": [0, 0, 0, 0, 0, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 2,
-                "busy_o": 1,
-                "done_o": 0,
-                "psums_o": [0, 0, 0, 0, 0, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "psums_o": [0, 0, 0, 0, 0, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 3,
-                "busy_o": 1,
-                "done_o": 0,
-                "psums_o": [0, 0, 0, 0, 0, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 4,
-                "busy_o": 1,
-                "done_o": 0,
-                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
-                "valids_o": [1, 1, 1, 1, 1, 1, 1, 1],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 6,
-                "busy_o": 0,
-                "done_o": 1,
-                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-        {
-            "start_i": 0,
-            "expected": {
-                "scheduler_state_o": 0,
-                "busy_o": 0,
-                "done_o": 0,
-                "psums_o": [5, 0, 0, 0, 5, 0, 0, 0],
-                "valids_o": [0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        },
-    ]
-
+    starts = [1] + [0 for _ in range(8)]
     steps = []
-    for step in sequence:
+    for start_value in starts:
         payload = dict(vectors)
-        payload["start_i"] = step["start_i"]
-        payload["expected"] = step["expected"]
+        payload["start_i"] = start_value
         steps.append(payload)
+    for payload, expected in zip(steps, top_npu_reference(steps=steps, rows=2, cols=2, depth=4, tile_count=2)):
+        payload["expected"] = expected
 
     return {
         "name": "dual_tile_broadcast_compute_top",

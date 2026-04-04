@@ -126,6 +126,12 @@ def _build_case_report(
                     "activation_read_addr": int(scheduler_snapshot["activation_read_addr_o"]),
                     "weight_read_bank": int(scheduler_snapshot["weight_read_addr_o"]) % 2,
                     "weight_read_addr": int(scheduler_snapshot["weight_read_addr_o"]),
+                    "store_valid": int(top_snapshot["result_write_valid_o"]),
+                    "store_addr": int(top_snapshot["result_write_addr_o"]),
+                    "store_payload": [int(value) for value in top_snapshot["result_write_payload_o"]],
+                    "store_valid_mask": [
+                        int(value) for value in top_snapshot.get("result_write_valid_mask_o", [])
+                    ],
                 },
                 "compute_path": {
                     "compute_en": int(scheduler_snapshot["compute_en_o"]),
@@ -144,11 +150,13 @@ def _build_case_report(
         depth=depth,
         operand_width_bits=operand_width_bits,
         architecture=architecture,
+        active_tile_count=sum(case.get("steps", [{}])[0].get("tile_enable_i", [1] * tile_count)),
     )
 
     return {
         "name": case["name"],
         "tile_count": tile_count,
+        "active_tile_count": sum(case.get("steps", [{}])[0].get("tile_enable_i", [1] * tile_count)),
         "rows": rows,
         "cols": cols,
         "depth": depth,
@@ -177,6 +185,12 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         "slot_count_i",
         "load_iterations_i",
         "compute_iterations_i",
+        "activation_base_addr_i",
+        "weight_base_addr_i",
+        "result_base_addr_i",
+        "slot_stride_i",
+        "store_stride_i",
+        "store_burst_count_i",
         "clear_on_done_i",
     ]
     program = {}
@@ -205,6 +219,9 @@ def _event_tags(scheduler_snapshot: Dict[str, Any], valid_lane_count: int) -> Li
     if int(scheduler_snapshot["compute_en_o"]):
         tags.append("compute")
 
+    if int(scheduler_snapshot.get("store_results_en_o", 0)):
+        tags.append("store_results")
+
     if int(scheduler_snapshot["clear_acc_o"]):
         tags.append("clear")
 
@@ -228,8 +245,10 @@ def _empty_summary() -> Dict[str, Any]:
             "dma_activation_cycles": 0,
             "dma_weight_cycles": 0,
             "load_cycles": 0,
+            "store_cycles": 0,
             "activation_elements_transferred": 0,
             "weight_elements_transferred": 0,
+            "result_elements_stored": 0,
             "max_scratchpad_depth": 0,
             "activation_slots_touched": 0,
             "weight_slots_touched": 0,
@@ -237,8 +256,12 @@ def _empty_summary() -> Dict[str, Any]:
             "peak_weight_slots_live": 0,
             "working_set_utilization": 0.0,
             "total_dma_bits_transferred": 0,
+            "total_store_bits_transferred": 0,
+            "total_memory_bits_transferred": 0,
             "average_dma_bits_per_dma_cycle": 0.0,
+            "average_store_bits_per_store_cycle": 0.0,
             "peak_dma_bits_per_cycle": 0,
+            "peak_store_bits_per_cycle": 0,
             "effective_external_bandwidth_gb_per_s": 0.0,
             "peak_external_bandwidth_gb_per_s": 0.0,
             "theoretical_bus_bandwidth_gb_per_s": 0.0,
@@ -265,11 +288,13 @@ def _summarize_case_reports(
     summary["top_level_case_count"] = len(case_reports)
     activation_slots_touched = set()
     weight_slots_touched = set()
+    acc_width_bits = max(32, operand_width_bits * 4)
 
     for case_report in case_reports:
         rows = int(case_report["rows"])
         cols = int(case_report["cols"])
         depth = int(case_report.get("depth", 0))
+        active_tile_count = int(case_report.get("active_tile_count", 1))
         activation_slots_live = set()
         weight_slots_live = set()
         summary["memory_path"]["max_scratchpad_depth"] = max(
@@ -317,10 +342,23 @@ def _summarize_case_reports(
                 activation_slots_touched.add(int(memory_path["activation_read_addr"]))
                 weight_slots_touched.add(int(memory_path["weight_read_addr"]))
 
+            if memory_path["store_valid"]:
+                stored_elements_this_cycle = sum(
+                    int(value) for value in memory_path.get("store_valid_mask", [])
+                )
+                store_bits_this_cycle = stored_elements_this_cycle * acc_width_bits
+                summary["memory_path"]["store_cycles"] += 1
+                summary["memory_path"]["result_elements_stored"] += stored_elements_this_cycle
+                summary["memory_path"]["total_store_bits_transferred"] += store_bits_this_cycle
+                summary["memory_path"]["peak_store_bits_per_cycle"] = max(
+                    summary["memory_path"]["peak_store_bits_per_cycle"],
+                    store_bits_this_cycle,
+                )
+
             if compute_path["compute_en"]:
                 summary["compute_path"]["compute_cycles"] += 1
                 summary["compute_path"]["estimated_mac_operations"] += int(
-                    compute_path["valid_lane_count"]
+                    active_tile_count * rows * cols
                 )
 
             if compute_path["clear_acc"]:
@@ -364,16 +402,30 @@ def _summarize_case_reports(
             summary["memory_path"]["total_dma_bits_transferred"] / float(dma_cycles),
             6,
         )
+    store_cycles = int(summary["memory_path"]["store_cycles"])
+    if store_cycles > 0:
+        summary["memory_path"]["average_store_bits_per_store_cycle"] = round(
+            summary["memory_path"]["total_store_bits_transferred"] / float(store_cycles),
+            6,
+        )
+
+    summary["memory_path"]["total_memory_bits_transferred"] = (
+        summary["memory_path"]["total_dma_bits_transferred"]
+        + summary["memory_path"]["total_store_bits_transferred"]
+    )
 
     if architecture is not None:
         theoretical_bandwidth = _estimate_bus_bandwidth_gb_per_s(architecture)
         effective_bandwidth = _estimate_external_bandwidth_gb_per_s(
-            transferred_bits=int(summary["memory_path"]["total_dma_bits_transferred"]),
+            transferred_bits=int(summary["memory_path"]["total_memory_bits_transferred"]),
             total_cycles=int(summary["total_cycles"]),
             target_frequency_mhz=float(architecture.target_frequency_mhz),
         )
         peak_bandwidth = _estimate_peak_external_bandwidth_gb_per_s(
-            peak_dma_bits_per_cycle=int(summary["memory_path"]["peak_dma_bits_per_cycle"]),
+            peak_dma_bits_per_cycle=max(
+                int(summary["memory_path"]["peak_dma_bits_per_cycle"]),
+                int(summary["memory_path"]["peak_store_bits_per_cycle"]),
+            ),
             target_frequency_mhz=float(architecture.target_frequency_mhz),
         )
         summary["memory_path"]["effective_external_bandwidth_gb_per_s"] = effective_bandwidth
@@ -404,11 +456,13 @@ def _summarize_trace(
     depth: int,
     operand_width_bits: int,
     architecture: Optional[ArchitectureCandidate],
+    active_tile_count: int = 1,
 ) -> Dict[str, Any]:
     case_report = {
         "rows": rows,
         "cols": cols,
         "depth": depth,
+        "active_tile_count": active_tile_count,
         "trace": trace,
     }
     summary = _summarize_case_reports(

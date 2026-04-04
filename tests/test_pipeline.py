@@ -242,6 +242,8 @@ class PipelineTest(unittest.TestCase):
                     "LOAD",
                     "COMPUTE",
                     "COMPUTE",
+                    "STORE",
+                    "STORE",
                     "CLEAR",
                     "DONE",
                     "IDLE",
@@ -250,6 +252,8 @@ class PipelineTest(unittest.TestCase):
                     "LOAD",
                     "LOAD",
                     "COMPUTE",
+                    "STORE",
+                    "STORE",
                     "DONE",
                     "IDLE",
                     "DMA_ACT",
@@ -257,18 +261,21 @@ class PipelineTest(unittest.TestCase):
                     "LOAD",
                     "LOAD",
                     "COMPUTE",
+                    "STORE",
+                    "STORE",
                     "DONE",
                     "IDLE",
                 ],
             )
-            self.assertEqual(report["summary"]["total_cycles"], 25)
-            self.assertEqual(report["summary"]["busy_cycles"], 19)
+            self.assertEqual(report["summary"]["total_cycles"], 31)
+            self.assertEqual(report["summary"]["busy_cycles"], 25)
             self.assertEqual(report["summary"]["done_cycles"], 3)
             self.assertEqual(report["summary"]["idle_cycles"], 3)
             self.assertEqual(report["summary"]["memory_path"]["dma_cycles"], 8)
             self.assertEqual(report["summary"]["memory_path"]["dma_activation_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["dma_weight_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["load_cycles"], 6)
+            self.assertEqual(report["summary"]["memory_path"]["store_cycles"], 6)
             self.assertEqual(report["summary"]["memory_path"]["max_scratchpad_depth"], 4)
             self.assertEqual(report["summary"]["memory_path"]["activation_slots_touched"], 2)
             self.assertEqual(report["summary"]["memory_path"]["weight_slots_touched"], 2)
@@ -276,18 +283,26 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report["summary"]["memory_path"]["peak_weight_slots_live"], 2)
             self.assertEqual(report["summary"]["memory_path"]["working_set_utilization"], 0.5)
             self.assertEqual(report["summary"]["memory_path"]["total_dma_bits_transferred"], 128)
+            self.assertEqual(report["summary"]["memory_path"]["result_elements_stored"], 16)
+            self.assertEqual(report["summary"]["memory_path"]["total_store_bits_transferred"], 512)
+            self.assertEqual(report["summary"]["memory_path"]["total_memory_bits_transferred"], 640)
             self.assertEqual(
                 report["summary"]["memory_path"]["average_dma_bits_per_dma_cycle"],
                 16.0,
             )
             self.assertEqual(report["summary"]["memory_path"]["peak_dma_bits_per_cycle"], 16)
             self.assertEqual(
+                report["summary"]["memory_path"]["average_store_bits_per_store_cycle"],
+                85.333333,
+            )
+            self.assertEqual(report["summary"]["memory_path"]["peak_store_bits_per_cycle"], 128)
+            self.assertEqual(
                 report["summary"]["memory_path"]["effective_external_bandwidth_gb_per_s"],
-                0.64,
+                2.580645,
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["peak_external_bandwidth_gb_per_s"],
-                2.0,
+                16.0,
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["theoretical_bus_bandwidth_gb_per_s"],
@@ -295,11 +310,11 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["bus_bandwidth_utilization"],
-                0.005,
+                0.020161,
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["peak_bus_bandwidth_utilization"],
-                0.015625,
+                0.125,
             )
             self.assertEqual(report["summary"]["compute_path"]["compute_cycles"], 4)
             self.assertEqual(report["summary"]["compute_path"]["clear_cycles"], 1)
@@ -309,11 +324,11 @@ class PipelineTest(unittest.TestCase):
                 report["summary"]["top_npu_throughput"]["estimation_model"],
                 "peak_scaled_by_compute_duty_cycle",
             )
-            self.assertEqual(report["summary"]["top_npu_throughput"]["total_cycles"], 25)
+            self.assertEqual(report["summary"]["top_npu_throughput"]["total_cycles"], 31)
             self.assertEqual(report["summary"]["top_npu_throughput"]["compute_cycles"], 4)
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["scheduler_overhead_cycles"],
-                21,
+                27,
             )
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["architecture_pe_count"],
@@ -325,19 +340,19 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["compute_duty_cycle"],
-                0.16,
+                0.129032,
             )
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["compute_duty_cycle_while_busy"],
-                0.210526,
+                0.16,
             )
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["estimated_effective_ops_per_cycle"],
-                8192.0,
+                6606.451613,
             )
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["estimated_effective_tops"],
-                8.192,
+                6.606452,
             )
 
             report_payload = json.loads(Path(report["path"]).read_text(encoding="utf-8"))
@@ -360,6 +375,25 @@ class PipelineTest(unittest.TestCase):
                 report_payload["cases"][0]["trace"][5]["memory_path"]["weight_read_bank"],
                 1,
             )
+            self.assertEqual(report_payload["cases"][0]["trace"][8]["memory_path"]["store_valid"], 1)
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][8]["memory_path"]["store_payload"],
+                [42, 16, 0, 0],
+            )
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][8]["memory_path"]["store_valid_mask"],
+                [1, 1, 0, 0],
+            )
+            self.assertEqual(report_payload["cases"][0]["trace"][9]["memory_path"]["store_valid"], 1)
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][9]["memory_path"]["store_payload"],
+                [0, 0, 40, 24],
+            )
+            self.assertEqual(report_payload["cases"][1]["trace"][5]["memory_path"]["store_valid"], 1)
+            self.assertEqual(
+                report_payload["cases"][1]["trace"][6]["memory_path"]["store_valid_mask"],
+                [0, 0, 1, 1],
+            )
             self.assertEqual(
                 report_payload["cases"][2]["top_npu_throughput"]["seed_peak_macs_per_cycle"],
                 8,
@@ -378,15 +412,15 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(
                 report_payload["cases"][0]["top_npu_throughput"]["estimated_effective_tops"],
-                9.309091,
+                7.876923,
             )
             self.assertEqual(
                 report_payload["cases"][1]["top_npu_throughput"]["estimated_effective_tops"],
-                7.314286,
+                5.688889,
             )
             self.assertEqual(
                 report_payload["cases"][2]["top_npu_throughput"]["estimated_effective_tops"],
-                7.314286,
+                5.688889,
             )
 
             balanced_candidate = next(
@@ -573,7 +607,7 @@ class BenchmarkTest(unittest.TestCase):
                         generator_backend="heuristic",
                         requested_backend="llm",
                         supporting_files=[str(llm_request)],
-                        estimated_effective_tops=1.6384,
+                        estimated_effective_tops=1.32129,
                     )
                 return _make_fake_pipeline_result(
                     output_dir=output_dir,
@@ -582,7 +616,7 @@ class BenchmarkTest(unittest.TestCase):
                     generator_backend="heuristic",
                     requested_backend="heuristic",
                     supporting_files=[],
-                    estimated_effective_tops=8.192,
+                    estimated_effective_tops=6.606452,
                 )
 
             with patch("create_npu.benchmark.CreateNPUPipeline") as pipeline_cls:
@@ -610,7 +644,7 @@ class BenchmarkTest(unittest.TestCase):
                     generator_backend="heuristic",
                     requested_backend="heuristic" if generator_backend == "heuristic" else "llm",
                     supporting_files=[],
-                    estimated_effective_tops=8.192 if generator_backend == "heuristic" else 1.6384,
+                    estimated_effective_tops=6.606452 if generator_backend == "heuristic" else 1.32129,
                     missing_tool_name="iverilog_sim",
                 )
 
@@ -696,16 +730,18 @@ def _make_fake_pipeline_result(
             "available": True,
             "summary": {
                 "top_level_case_count": 3,
-                "total_cycles": 25,
-                "busy_cycles": 19,
+                "total_cycles": 31,
+                "busy_cycles": 25,
                 "done_cycles": 3,
                 "idle_cycles": 3,
                 "memory_path": {
                     "dma_cycles": 8,
                     "load_cycles": 6,
+                    "store_cycles": 6,
                     "working_set_utilization": 0.5,
                     "total_dma_bits_transferred": 128,
-                    "peak_external_bandwidth_gb_per_s": 2.0,
+                    "total_store_bits_transferred": 512,
+                    "peak_external_bandwidth_gb_per_s": 16.0,
                 },
                 "compute_path": {
                     "compute_cycles": 4,

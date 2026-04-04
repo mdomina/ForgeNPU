@@ -8,7 +8,6 @@ Bootstrap eseguibile del progetto descritto in `progetto_npu_ai.md`: prende un r
 
 Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 
-- parsing euristico del requisito;
 - parsing euristico del requisito con memoria disponibile, bandwidth, area, latenza e frequenza target;
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
@@ -16,16 +15,18 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - `scratchpad_controller` seed con tracciamento di validita' e due banchi selezionabili, coerente con il timing del path DMA/load;
 - `tile_compute_unit` seed capace di leggere e scrivere banchi distinti dello scratchpad per esperimenti di prefetch/ping-pong locali;
 - `top_npu` seed che decodifica gli slot del programma in `bank + local_addr`, usando davvero il banking del tile nel flow end-to-end;
-- controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute e clear finale;
+- controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute, descrittori minimi di memoria e clear finale;
+- primitive seed di `LOAD/STORE` con base address, stride e burst count, propagate nel `scheduler` e nel `top_npu`;
+- writeback `STORE` top-level segmentato per burst, con payload risultati e `valid_mask` osservabili a livello top-level;
 - `top_npu` parametrico su `TILE_COUNT` con wiring multi-tile seed e broadcast control-path verso piu' `tile_compute_unit`;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
-- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
+- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
 - harness locale per lint, simulazione e sintesi con fallback esplicito;
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del `top_npu` usa ora il banking del tile tramite decodifica degli slot del programma, ma non implementa ancora uno scale-out completo con partizionamento reale dei dati e interconnect dedicato.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del `top_npu` usa ora banking, descrittori minimi e burst di writeback nel flow end-to-end, ma non implementa ancora uno scale-out completo con partizionamento reale dei dati, interconnect dedicato e tile size non fissata.
 
 ## Quick Start
 
@@ -148,8 +149,8 @@ Comportamento:
 
 ## Prossimi passi consigliati
 
-1. Abilitare `iverilog` per compilazione e simulazione reali.
-2. Introdurre doppio buffering o piu' banchi nel `scratchpad_controller`.
-3. Avvicinare il path di memoria a un flow NPU reale con primitive di load/store piu' ricche.
+1. Estendere `systolic_tile` oltre il caso `2x2` e collegarlo a una configurazione reale di tile size.
+2. Separare meglio control-path e data-path del cluster per preparare scheduling e interconnect piu' realistici.
+3. Aggiungere flush della pipeline e timing piu' esplicito nel tile/cluster.
 4. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
 5. Salvare e confrontare meglio i dataset di run per il learning loop.

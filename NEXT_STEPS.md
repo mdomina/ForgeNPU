@@ -22,6 +22,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Implementare un primo `scheduler` con sequenza `DMA -> load -> compute -> clear`.
 - [x] Collegare `scheduler` e `tile_compute_unit` in un primo `top_npu`.
 - [x] Aggiungere test end-to-end del top-level con una sequenza minima di inferenza.
+- [x] Generalizzare le primitive di memoria con descrittori minimi di `load/store`, stride e burst count.
+- [x] Rendere osservabile il writeback burst del `top_npu` con payload segmentato e `valid_mask`.
+- [x] Richiudere il flow completo nel container Docker con `verilator`, `iverilog` e `yosys` verdi.
 
 ## Priorita' Immediata
 
@@ -48,7 +51,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 - [x] Migliorare `scratchpad_controller` con piu' banchi o doppio buffering.
 - [x] Collegare la selezione dei banchi allo `scheduler` e al `top_npu`.
-- [ ] Introdurre primitive di load/store piu' vicine a un flusso NPU reale.
+- [x] Introdurre una prima primitiva `STORE` top-level con writeback osservabile e metriche dedicate.
+- [x] Generalizzare le primitive di load/store con descrittori, burst e destinazioni risultato piu' realistiche.
 - [x] Modellare bandwidth e occupazione memoria nelle metriche.
 
 ## Top-Level NPU
@@ -87,9 +91,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- i report espongono almeno gli stati del `scheduler` e gli eventi principali del path memoria/compute;
-- esiste una stima architetturale del throughput del `top_npu` e non solo del tile;
-- il top-level e' pronto a scalare oltre il caso seed a singolo tile;
-- i test del cluster e del top-level continuano a passare dopo l'estensione del controllo;
-- la pipeline continua a selezionare automaticamente il candidato migliore;
-- i report in `runs/` restano leggibili e confrontabili.
+- `systolic_tile` non e' piu' fissato al solo caso `2x2` e la tile size reale entra nella configurazione;
+- il cluster distingue meglio control-path e data-path, evitando assunzioni troppo rigide nel top-level;
+- esiste una gestione esplicita del flush della pipeline del tile coerente con timing e report;
+- i test del cluster e del top-level continuano a passare anche dentro il container Docker;
+- il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.

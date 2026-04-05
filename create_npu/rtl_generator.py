@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from create_npu.golden_model import (
     cluster_control_reference,
@@ -19,6 +19,7 @@ def emit_seed_rtl(
     generator_backend: str = "heuristic",
     extra_notes=None,
     extra_supporting_files=None,
+    rtl_overrides: Optional[Dict[str, str]] = None,
 ) -> GeneratedDesignBundle:
     rtl_dir = output_dir / "rtl"
     tb_dir = output_dir / "tb"
@@ -27,6 +28,7 @@ def emit_seed_rtl(
 
     operand_width, note = _resolve_width(spec.numeric_precision)
     acc_width = max(32, operand_width * 4)
+    rtl_overrides = rtl_overrides or {}
     seed_tile_rows, seed_tile_cols = _seed_tile_shape(
         architecture.tile_rows,
         architecture.tile_cols,
@@ -40,19 +42,27 @@ def emit_seed_rtl(
     )
 
     processing_element_path = rtl_dir / "processing_element.sv"
-    processing_element_path.write_text(
+    processing_element_source = rtl_overrides.get(
+        "processing_element.sv",
         _processing_element_template(operand_width=operand_width, acc_width=acc_width),
+    )
+    processing_element_path.write_text(
+        processing_element_source,
         encoding="utf-8",
     )
 
     systolic_tile_path = rtl_dir / "systolic_tile.sv"
-    systolic_tile_path.write_text(
+    systolic_tile_source = rtl_overrides.get(
+        "systolic_tile.sv",
         _systolic_tile_template(
             operand_width=operand_width,
             acc_width=acc_width,
             seed_rows=seed_tile_rows,
             seed_cols=seed_tile_cols,
         ),
+    )
+    systolic_tile_path.write_text(
+        systolic_tile_source,
         encoding="utf-8",
     )
 
@@ -215,6 +225,10 @@ def emit_seed_rtl(
         notes.append(note)
     if extra_notes:
         notes.extend(extra_notes)
+    if rtl_overrides:
+        notes.append(
+            "Applicati override RTL su " + ", ".join(sorted(rtl_overrides)) + "."
+        )
 
     if seed_tile_rows != architecture.tile_rows or seed_tile_cols != architecture.tile_cols:
         notes.append(

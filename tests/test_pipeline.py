@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from create_npu.architect import plan_architecture
+from create_npu.architect import generate_candidate_architectures, plan_architecture
 from create_npu.benchmark import run_regression_benchmark
 from create_npu.harness import VerificationHarness
 from create_npu.models import (
@@ -17,6 +17,13 @@ from create_npu.models import (
 )
 from create_npu.pipeline import CreateNPUPipeline
 from create_npu.requirement_parser import RequirementParser
+from create_npu.rtl_generator import (
+    _processing_element_template,
+    _resolve_width,
+    _seed_tile_shape,
+    _systolic_tile_template,
+    emit_seed_rtl,
+)
 from create_npu.scorer import score_design
 
 
@@ -193,6 +200,32 @@ class ArchitecturePlanningTest(unittest.TestCase):
         self.assertGreater(
             structured_architecture.target_frequency_mhz,
             baseline_architecture.target_frequency_mhz,
+        )
+
+    def test_generate_candidate_architectures_supports_best_of_n(self) -> None:
+        architectures = generate_candidate_architectures(
+            RequirementSpec(
+                original_text="NPU INT8 20 TOPS transformer.",
+                numeric_precision="INT8",
+                throughput_value=20.0,
+                throughput_unit="TOPS",
+                workload_type="transformer",
+                target_frequency_mhz=1000.0,
+            ),
+            max_candidates=5,
+        )
+
+        self.assertEqual(
+            [architecture.candidate_id for architecture in architectures],
+            ["balanced", "throughput_max", "efficiency", "balanced_b1", "throughput_max_b1"],
+        )
+        self.assertGreater(
+            architectures[3].local_sram_kb_per_tile,
+            architectures[0].local_sram_kb_per_tile,
+        )
+        self.assertGreater(
+            architectures[4].bus_width_bits,
+            architectures[1].bus_width_bits,
         )
 
 
@@ -915,6 +948,88 @@ class PipelineTest(unittest.TestCase):
                 3,
             )
 
+    def test_pipeline_archives_dataset_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_output_dir = Path(temp_dir)
+            pipeline = CreateNPUPipeline(base_output_dir=base_output_dir)
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 50 TOPS con supporto transformer e batch 1-4.",
+                num_candidates=3,
+            )
+
+            self.assertIn("dataset", result.to_dict())
+            dataset = result.dataset
+            self.assertTrue(Path(dataset["dataset_dir"]).exists())
+            self.assertTrue(Path(dataset["run_sample_path"]).exists())
+            self.assertTrue(Path(dataset["candidate_samples_path"]).exists())
+            self.assertTrue(Path(dataset["run_samples_jsonl"]).exists())
+            self.assertTrue(Path(dataset["candidate_samples_jsonl"]).exists())
+            self.assertTrue(Path(dataset["manifest_path"]).exists())
+
+            manifest = json.loads(Path(dataset["manifest_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(manifest["run_sample_count"], 1)
+            self.assertEqual(manifest["candidate_sample_count"], 3)
+            self.assertEqual(manifest["good_candidate_count"], 1)
+            self.assertEqual(manifest["bad_candidate_count"], 2)
+            self.assertEqual(manifest["accepted_candidate_count"], 1)
+            self.assertEqual(manifest["rejected_candidate_count"], 2)
+            self.assertIn("average_candidate_reward", manifest)
+
+            run_sample = json.loads(Path(dataset["run_sample_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(run_sample["selected_candidate_id"], result.architecture.candidate_id)
+            self.assertEqual(run_sample["candidate_labels"]["balanced"], "good")
+            self.assertEqual(run_sample["candidate_labels"]["throughput_max"], "bad")
+            self.assertEqual(run_sample["candidate_labels"]["efficiency"], "bad")
+            self.assertEqual(run_sample["learning_feedback_summary"]["accepted_candidate_count"], 1)
+
+            candidate_samples = json.loads(
+                Path(dataset["candidate_samples_path"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(candidate_samples), 3)
+            selected_sample = next(sample for sample in candidate_samples if sample["selected"])
+            self.assertEqual(selected_sample["candidate_id"], result.architecture.candidate_id)
+            self.assertEqual(selected_sample["label"], "good")
+            self.assertIn("selected_best", selected_sample["label_reasons"])
+            self.assertTrue(selected_sample["learning_feedback"]["accept"])
+            self.assertEqual(
+                selected_sample["learning_feedback"]["feedback_bucket"],
+                "accept_selected_verified",
+            )
+
+    def test_pipeline_best_of_n_and_learning_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 20 TOPS con supporto transformer e batch 1-4.",
+                num_candidates=5,
+            )
+
+            self.assertEqual(len(result.candidate_results), 5)
+            self.assertEqual(
+                [candidate["candidate_id"] for candidate in result.candidate_results],
+                ["balanced", "throughput_max", "efficiency", "balanced_b1", "throughput_max_b1"],
+            )
+            self.assertEqual(result.search["strategy"], "deterministic_best_of_n")
+            self.assertEqual(result.search["requested_candidate_count"], 5)
+            self.assertEqual(result.search["generated_candidate_count"], 5)
+            self.assertEqual(result.search["variant_candidate_count"], 2)
+            self.assertEqual(result.search["profile_counts"]["balanced"], 2)
+            self.assertEqual(result.search["profile_counts"]["throughput_max"], 2)
+            self.assertEqual(result.search["profile_counts"]["efficiency"], 1)
+            self.assertEqual(
+                result.search["ranked_candidates"][0]["candidate_id"],
+                result.architecture.candidate_id,
+            )
+            self.assertEqual(result.learning_feedback["accepted_candidate_count"], 1)
+            self.assertEqual(result.learning_feedback["rejected_candidate_count"], 4)
+            self.assertEqual(
+                result.learning_feedback["reward_ranking"][0]["candidate_id"],
+                result.architecture.candidate_id,
+            )
+            self.assertTrue(
+                all("learning_feedback" in candidate for candidate in result.candidate_results)
+            )
+
     def test_llm_backend_falls_back_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
@@ -928,6 +1043,147 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(result.generated.generator_backend, "heuristic")
             self.assertEqual(result.environment["llm"]["requested_backend"], "llm")
             self.assertIn("llm_request.json", " ".join(result.generated.supporting_files))
+
+    def test_emit_seed_rtl_applies_rtl_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spec = RequirementSpec(
+                original_text="Voglio una NPU INT8 da 10 TOPS per dense GEMM.",
+                numeric_precision="INT8",
+                throughput_value=10.0,
+                throughput_unit="TOPS",
+                workload_type="dense_gemm",
+                target_frequency_mhz=1000.0,
+            )
+            architecture = plan_architecture(spec)
+            operand_width, _ = _resolve_width(spec.numeric_precision)
+            acc_width = max(32, operand_width * 4)
+            seed_rows, seed_cols = _seed_tile_shape(
+                architecture.tile_rows,
+                architecture.tile_cols,
+            )
+            processing_override = (
+                "// llm override processing_element\n"
+                + _processing_element_template(
+                    operand_width=operand_width,
+                    acc_width=acc_width,
+                )
+            )
+            tile_override = (
+                "// llm override systolic_tile\n"
+                + _systolic_tile_template(
+                    operand_width=operand_width,
+                    acc_width=acc_width,
+                    seed_rows=seed_rows,
+                    seed_cols=seed_cols,
+                )
+            )
+            bundle = emit_seed_rtl(
+                spec=spec,
+                architecture=architecture,
+                output_dir=Path(temp_dir),
+                candidate_id=architecture.candidate_id,
+                generator_backend="llm",
+                rtl_overrides={
+                    "processing_element.sv": processing_override,
+                    "systolic_tile.sv": tile_override,
+                },
+            )
+
+            self.assertIn("Applicati override RTL", " ".join(bundle.notes))
+            processing_payload = (Path(temp_dir) / "rtl" / "processing_element.sv").read_text(
+                encoding="utf-8"
+            )
+            tile_payload = (Path(temp_dir) / "rtl" / "systolic_tile.sv").read_text(
+                encoding="utf-8"
+            )
+            self.assertTrue(processing_payload.startswith("// llm override processing_element"))
+            self.assertTrue(tile_payload.startswith("// llm override systolic_tile"))
+
+    def test_pipeline_live_llm_backend_compares_against_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+
+            def fake_live_generation(prompt_payload):
+                parsed_payload = {
+                    "summary": "Override minimali compatibili con il seed.",
+                    "expected_benefits": ["Mantiene lo stesso comportamento del seed."],
+                    "verification_risks": ["Basso rischio: vengono alterati solo commenti."],
+                    "rtl_overrides": [
+                        {
+                            "file_name": "processing_element.sv",
+                            "module_name": "processing_element",
+                            "source": (
+                                "// llm live override processing_element\n"
+                                + prompt_payload["seed_modules"]["processing_element.sv"]
+                            ),
+                            "rationale": "Traccia il path live senza cambiare l'interfaccia.",
+                        },
+                        {
+                            "file_name": "systolic_tile.sv",
+                            "module_name": "systolic_tile",
+                            "source": (
+                                "// llm live override systolic_tile\n"
+                                + prompt_payload["seed_modules"]["systolic_tile.sv"]
+                            ),
+                            "rationale": "Traccia il path live senza cambiare l'interfaccia.",
+                        },
+                    ],
+                }
+                return parsed_payload, {
+                    "id": "resp_test",
+                    "output_text": json.dumps(parsed_payload),
+                }
+
+            live_status = {
+                "requested_backend": "llm",
+                "effective_backend": "llm",
+                "available": True,
+                "reason": "Backend LLM pronto per chiamate live.",
+                "model": "gpt-test",
+                "base_url": "https://example.invalid/v1",
+                "live_generation_enabled": True,
+            }
+
+            with patch("create_npu.environment.probe_llm_backend", return_value=live_status):
+                with patch("create_npu.generator_backend.probe_llm_backend", return_value=live_status):
+                    with patch(
+                        "create_npu.generator_backend._run_live_llm_generation",
+                        side_effect=fake_live_generation,
+                    ):
+                        result = pipeline.run(
+                            "Voglio una NPU INT8 da 10 TOPS per dense GEMM.",
+                            num_candidates=1,
+                            generator_backend="llm",
+                            llm_model="gpt-test",
+                        )
+
+            self.assertEqual(result.generated.generator_backend, "llm")
+            self.assertEqual(result.environment["llm"]["effective_backend"], "llm")
+            self.assertIn("llm_response.json", " ".join(result.generated.supporting_files))
+            self.assertIn(
+                "backend_comparison.json",
+                " ".join(result.generated.supporting_files),
+            )
+
+            candidate = result.candidate_results[0]
+            self.assertIn("backend_comparison", candidate)
+            self.assertTrue(candidate["backend_comparison"]["selected_llm_variant"])
+            self.assertEqual(candidate["backend_comparison"]["score_delta_llm_minus_seed"], 0.0)
+            self.assertTrue(str(candidate["output_dir"]).endswith("/llm_variant"))
+            self.assertTrue(
+                str(candidate["backend_comparison"]["heuristic_seed"]["output_dir"]).endswith(
+                    "/heuristic_seed"
+                )
+            )
+            candidate_root = Path(result.output_dir) / "candidates" / candidate["candidate_id"]
+            self.assertTrue((candidate_root / "llm_request.json").exists())
+            self.assertTrue((candidate_root / "llm_response.json").exists())
+            self.assertTrue((candidate_root / "llm_structured_output.json").exists())
+            self.assertTrue((candidate_root / "backend_comparison.json").exists())
+            processing_payload = (
+                Path(candidate["output_dir"]) / "rtl" / "processing_element.sv"
+            ).read_text(encoding="utf-8")
+            self.assertTrue(processing_payload.startswith("// llm live override processing_element"))
 
 
 class HarnessTest(unittest.TestCase):

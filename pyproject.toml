@@ -10,9 +10,11 @@ readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Codex" }]
 
+[project.optional-dependencies]
+llm = ["openai>=1.0.0"]
+
 [project.scripts]
 create-npu = "create_npu.cli:main"
 
 [tool.setuptools]
 packages = ["create_npu"]
-

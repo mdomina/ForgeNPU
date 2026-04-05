@@ -1,21 +1,24 @@
 import math
 from typing import List
 
+from create_npu.candidate_space import (
+    build_candidate_ids,
+    candidate_variant_index,
+    canonical_candidate_profile,
+)
 from create_npu.models import ArchitectureCandidate, RequirementSpec
 from create_npu.workloads import get_workload_profile, resolve_family_for_spec
-
-
-DEFAULT_CANDIDATE_IDS = ["balanced", "throughput_max", "efficiency"]
-
 
 def generate_candidate_architectures(
     spec: RequirementSpec, max_candidates: int = 3
 ) -> List[ArchitectureCandidate]:
-    candidate_ids = DEFAULT_CANDIDATE_IDS[: max(1, max_candidates)]
+    candidate_ids = build_candidate_ids(max_candidates)
     return [plan_architecture(spec, candidate_id=candidate_id) for candidate_id in candidate_ids]
 
 
 def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> ArchitectureCandidate:
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    variant_index = candidate_variant_index(candidate_id)
     workload_profile = get_workload_profile(spec.workload_type)
     throughput_tops = _normalize_throughput_to_tops(spec)
     target_frequency_mhz = _resolve_frequency(spec=spec, candidate_id=candidate_id)
@@ -73,9 +76,9 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
     for module_hint in _structured_module_hints(spec=spec, family=family):
         if module_hint not in modules:
             modules.append(module_hint)
-    if candidate_id == "throughput_max":
+    if candidate_profile == "throughput_max":
         modules.append("prefetch_buffer")
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         modules.append("clock_gating_unit")
 
     rationale = [
@@ -103,6 +106,10 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
         f"Potenza stimata iniziale: {estimated_power_watts:.1f} W.",
         f"Area stimata iniziale: {estimated_area_mm2:.1f} mm2.",
     ]
+    if variant_index > 0:
+        rationale.append(
+            f"Best-of-N: variante esplorativa {variant_index} del profilo `{candidate_profile}`."
+        )
 
     if spec.sequence_length is not None:
         rationale.append(f"Sequence length esplicita rilevata: {spec.sequence_length}.")
@@ -217,16 +224,25 @@ def _choose_memory_hierarchy(
 
 
 def _baseline_local_sram_kb(spec: RequirementSpec, candidate_id: str) -> int:
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    variant_index = candidate_variant_index(candidate_id)
     workload_profile = get_workload_profile(spec.workload_type)
     base_kb = 256 if spec.numeric_precision.startswith("INT") else 512
     base_kb += workload_profile.local_sram_kb_delta
     base_kb += _structured_local_sram_delta(spec)
     if spec.batch_max > 8:
         base_kb += 256
-    if candidate_id == "throughput_max":
+    if candidate_profile == "throughput_max":
         base_kb += 128
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         base_kb += 64
+    if variant_index > 0:
+        if candidate_profile == "balanced":
+            base_kb += 64 * variant_index
+        elif candidate_profile == "throughput_max":
+            base_kb += 96 * variant_index
+        elif candidate_profile == "efficiency":
+            base_kb = max(64, base_kb - (32 * variant_index))
     return max(64, base_kb)
 
 
@@ -235,16 +251,25 @@ def _baseline_global_buffer_mb(
     tile_count: int,
     candidate_id: str,
 ) -> int:
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    variant_index = candidate_variant_index(candidate_id)
     workload_profile = get_workload_profile(spec.workload_type)
     base_global_buffer_mb = (
         max(4, math.ceil(tile_count / 4.0))
         + workload_profile.global_buffer_mb_delta
         + _structured_global_buffer_delta(spec)
     )
-    if candidate_id == "throughput_max":
-        return base_global_buffer_mb + 2
-    if candidate_id == "efficiency":
-        return max(2, base_global_buffer_mb - 1)
+    if candidate_profile == "throughput_max":
+        base_global_buffer_mb += 2
+    if candidate_profile == "efficiency":
+        base_global_buffer_mb = max(2, base_global_buffer_mb - 1)
+    if variant_index > 0:
+        if candidate_profile == "balanced":
+            base_global_buffer_mb += variant_index
+        elif candidate_profile == "throughput_max":
+            base_global_buffer_mb += max(1, variant_index)
+        elif candidate_profile == "efficiency":
+            base_global_buffer_mb = max(1, base_global_buffer_mb - min(variant_index, 1))
     return max(1, base_global_buffer_mb)
 
 
@@ -254,6 +279,8 @@ def _choose_bus_width(
     spec: RequirementSpec,
     target_frequency_mhz: float,
 ) -> int:
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    variant_index = candidate_variant_index(candidate_id)
     workload_profile = get_workload_profile(spec.workload_type)
     if throughput_tops >= 500.0:
         base_width = 2048
@@ -279,14 +306,23 @@ def _choose_bus_width(
         )
         base_width = max(base_width, required_width)
 
-    if candidate_id == "throughput_max":
+    if candidate_profile == "throughput_max":
         base_width += 512
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         base_width = max(256, base_width - 256)
+    if variant_index > 0:
+        if candidate_profile == "balanced":
+            base_width += 128 * variant_index
+        elif candidate_profile == "throughput_max":
+            base_width += 256 * variant_index
+        elif candidate_profile == "efficiency":
+            base_width = max(256, base_width - (128 * variant_index))
     return max(base_width, required_width)
 
 
 def _resolve_frequency(spec: RequirementSpec, candidate_id: str) -> float:
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    variant_index = candidate_variant_index(candidate_id)
     base_frequency = spec.target_frequency_mhz or 1000.0
     if spec.optimization_priority == "latency":
         base_frequency *= 1.08
@@ -300,20 +336,28 @@ def _resolve_frequency(spec: RequirementSpec, candidate_id: str) -> float:
     if spec.execution_mode == "training":
         base_frequency *= 0.95
 
-    if candidate_id == "throughput_max":
-        return round(base_frequency * 1.15, 2)
-    if candidate_id == "efficiency":
-        return round(base_frequency * 0.88, 2)
-    return base_frequency
+    if candidate_profile == "throughput_max":
+        base_frequency *= 1.15
+    if candidate_profile == "efficiency":
+        base_frequency *= 0.88
+    if variant_index > 0:
+        if candidate_profile == "balanced":
+            base_frequency *= 1.0 + (0.02 * variant_index)
+        elif candidate_profile == "throughput_max":
+            base_frequency *= 1.0 + (0.03 * variant_index)
+        elif candidate_profile == "efficiency":
+            base_frequency *= max(0.75, 1.0 - (0.04 * variant_index))
+    return round(base_frequency, 2)
 
 
 def _estimate_power(
     pe_count: int, target_frequency_mhz: float, bus_width_bits: int, candidate_id: str
 ) -> float:
+    candidate_profile = canonical_candidate_profile(candidate_id)
     base_power = max(20.0, (pe_count * target_frequency_mhz) / 1_500_000.0 + (bus_width_bits / 128.0))
-    if candidate_id == "throughput_max":
+    if candidate_profile == "throughput_max":
         return round(base_power * 1.18, 2)
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         return round(base_power * 0.78, 2)
     return round(base_power, 2)
 
@@ -321,18 +365,20 @@ def _estimate_power(
 def _estimate_area(
     pe_count: int, local_sram_kb_per_tile: int, tile_count: int, candidate_id: str
 ) -> float:
+    candidate_profile = canonical_candidate_profile(candidate_id)
     base_area = (pe_count / 6500.0) + ((local_sram_kb_per_tile * tile_count) / 16384.0)
-    if candidate_id == "throughput_max":
+    if candidate_profile == "throughput_max":
         return round(base_area * 1.12, 2)
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         return round(base_area * 0.93, 2)
     return round(base_area, 2)
 
 
 def _candidate_rationale(candidate_id: str) -> str:
-    if candidate_id == "throughput_max":
+    candidate_profile = canonical_candidate_profile(candidate_id)
+    if candidate_profile == "throughput_max":
         return "Profilo throughput_max: privilegio frequenza e banda rispetto al costo energetico."
-    if candidate_id == "efficiency":
+    if candidate_profile == "efficiency":
         return "Profilo efficiency: riduco frequenza e banda per rientrare piu' facilmente nel budget di potenza."
     return "Profilo balanced: compromesso iniziale tra throughput, banda e consumi."
 

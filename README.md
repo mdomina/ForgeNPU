@@ -30,11 +30,14 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - golden model Python con vettori di verifica salvati negli artifact;
 - report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
 - report di esecuzione con profilo workload esplicito, requirement profile strutturato, famiglia architetturale preferita/selezionata e assunzioni persistite del parser;
+- archivio dataset locale che salva ogni run come sample riusabile e traccia candidati `good`/`bad` con score, report e log dei tool;
+- best-of-N automatico sopra i tre profili seed, con espansione deterministica di varianti quando `--num-candidates` supera i profili base;
+- segnali di learning feedback derivati dall'EDA (`accept/reject`, reward, bucket di feedback e motivi di rejection) pronti per rejection sampling o RL offline;
 - harness locale per lint, simulazione e sintesi con fallback esplicito, inclusa sintesi `yosys` bounded sui parametri dei casi `top_npu` per mantenere trattabile la regressione;
-- backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
+- backend LLM opzionale con chiamata live, output JSON strutturato, override RTL mirati e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `cluster_interconnect`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il cluster separa ora in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Il prossimo passo utile e' attivare davvero il backend LLM live oltre il fallback euristico, riusando la specifica strutturata appena estesa.
+Il generatore RTL resta seed-based come baseline, ma puo' ora affiancare una variante live LLM con override controllati di `processing_element.sv` e `systolic_tile.sv`, confrontandola automaticamente contro il seed euristico tramite lo scoring corrente. Il cluster separa in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Le run vengono anche archiviate come dataset locale in `runs/dataset/` o nella root del benchmark corrente, con search summary best-of-N e learning feedback EDA pronti per loop di training offline. Il passo successivo con piu' impatto e' aggiungere un layer di mapping/compiler workload-to-program sopra il seed hardware.
 
 ## Quick Start
 
@@ -111,7 +114,19 @@ Ogni run scrive una directory `runs/output_<timestamp>/` con:
 - `candidates/<candidate_id>/verification_vectors.json`: casi per il golden model Python;
 - `candidates/<candidate_id>/execution_report.json`: trace degli stati del `scheduler`, metriche memoria/compute e stima di throughput del `top_npu`;
 - `candidates/<candidate_id>/logs/`: log dei tool e del reference check;
-- `candidates/<candidate_id>/llm_request.json`: prompt/artifact preparato quando si richiede `--generator-backend llm`.
+- `candidates/<candidate_id>/llm_request.json`: richiesta completa al backend LLM con prompt, schema e moduli seed;
+- `candidates/<candidate_id>/llm_response.json`: risposta raw serializzata del backend LLM;
+- `candidates/<candidate_id>/llm_structured_output.json`: payload JSON parsato e validato dal flow;
+- `candidates/<candidate_id>/backend_comparison.json`: confronto automatico tra seed euristico e variante LLM con delta di score e risultato selezionato;
+- `candidates/<candidate_id>/heuristic_seed/` e `candidates/<candidate_id>/llm_variant/`: artifact separati quando il backend live LLM e' realmente attivo;
+- `run_dataset_sample.json`: sample riusabile della run con requirement, candidato selezionato e summary del report;
+- `candidate_dataset_samples.json`: sample dei candidati della run con label `good`/`bad`, score, report, path ai log e learning feedback EDA;
+
+Nella root `runs/dataset/` vengono anche mantenuti:
+
+- `run_samples.jsonl`: archivio append-only dei sample di run;
+- `candidate_samples.jsonl`: archivio append-only dei sample di candidato;
+- `manifest.json`: contatori aggregati di run, candidati buoni/cattivi, accepted/rejected e reward medio.
 
 ## Tool EDA supportati
 
@@ -136,6 +151,9 @@ Per un ambiente Linux ripetibile e' disponibile anche il `Dockerfile` Ubuntu del
 Il backend LLM e' opzionale e si abilita via CLI:
 
 ```bash
+python3 -m pip install -e ".[llm]"
+export OPENAI_API_KEY=...
+export CREATE_NPU_ENABLE_LIVE_LLM=1
 python3 -m create_npu.cli run \
   --requirement "Voglio una NPU INT8 da 10 TOPS per dense GEMM." \
   --generator-backend llm \
@@ -144,9 +162,12 @@ python3 -m create_npu.cli run \
 
 Comportamento:
 
-- se il package `openai` o `OPENAI_API_KEY` mancano, il sistema salva `llm_request.json` e ripiega sul backend euristico;
-- se la configurazione LLM esiste ma `CREATE_NPU_ENABLE_LIVE_LLM` non vale `1`, il sistema non tenta chiamate live;
-- il fallback e' riportato in `environment.json`, `result.json` e nelle note del bundle generato.
+- il flow salva sempre `llm_request.json`; se la chiamata live riesce salva anche `llm_response.json` e `llm_structured_output.json`;
+- il modello riceve prompt strutturati con spec, architettura e seed RTL dei moduli consentiti, e deve restituire JSON conforme allo schema atteso;
+- gli override vengono applicati solo a `processing_element.sv` e `systolic_tile.sv`, mantenendo il resto del bundle seed invariato;
+- quando il backend live e' attivo, la pipeline valuta sia il seed euristico sia la variante LLM e salva il confronto in `backend_comparison.json`;
+- se `openai`, `OPENAI_API_KEY` o `CREATE_NPU_ENABLE_LIVE_LLM=1` mancano, oppure se la risposta non e' valida, il sistema ripiega automaticamente sul backend euristico;
+- il fallback e la selezione finale sono riportati in `environment.json`, `result.json` e nelle note del bundle generato.
 
 ## Struttura
 
@@ -157,6 +178,6 @@ Comportamento:
 
 ## Prossimi passi consigliati
 
-1. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
-2. Salvare e confrontare meglio i dataset di run per il learning loop.
-3. Aggiungere best-of-N automatico e confronto sistematico tra candidati.
+1. Aggiungere un layer `compiler/mapping` che trasformi workload reali in programmi `LOAD/COMPUTE/STORE` per il seed hardware.
+2. Rafforzare la verifica con casi randomizzati e stress test su backpressure, flush e multi-tile.
+3. Evolvere lo scoring verso confronto multi-obiettivo e frontiera di Pareto su throughput, potenza e area.

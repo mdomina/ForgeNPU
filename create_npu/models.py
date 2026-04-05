@@ -97,6 +97,9 @@ class PipelineResult:
     report: Dict[str, Any] = field(default_factory=dict)
     candidate_results: List[Dict[str, Any]] = field(default_factory=list)
     environment: Dict[str, Any] = field(default_factory=dict)
+    search: Dict[str, Any] = field(default_factory=dict)
+    learning_feedback: Dict[str, Any] = field(default_factory=dict)
+    dataset: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,4 +112,7 @@ class PipelineResult:
             "report": self.report,
             "candidate_results": self.candidate_results,
             "environment": self.environment,
+            "search": self.search,
+            "learning_feedback": self.learning_feedback,
+            "dataset": self.dataset,
         }

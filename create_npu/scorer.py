@@ -1,5 +1,6 @@
 from typing import List
 
+from create_npu.candidate_space import canonical_candidate_profile
 from create_npu.models import ArchitectureCandidate, RequirementSpec, ToolResult
 from create_npu.workloads import compatible_families_for_spec, resolve_family_for_spec
 
@@ -102,15 +103,16 @@ def _workload_family_bonus(spec: RequirementSpec, architecture: ArchitectureCand
 
 
 def _structured_requirement_bonus(spec: RequirementSpec, architecture: ArchitectureCandidate) -> float:
+    candidate_profile = canonical_candidate_profile(architecture.candidate_id)
     bonus = 0.0
 
-    if spec.optimization_priority == "throughput" and architecture.candidate_id == "throughput_max":
+    if spec.optimization_priority == "throughput" and candidate_profile == "throughput_max":
         bonus += 6.0
     elif spec.optimization_priority == "latency" and architecture.target_frequency_mhz >= 1000.0:
         bonus += 4.0
-    elif spec.optimization_priority in ("efficiency", "area") and architecture.candidate_id == "efficiency":
+    elif spec.optimization_priority in ("efficiency", "area") and candidate_profile == "efficiency":
         bonus += 6.0
-    elif spec.optimization_priority == "balanced" and architecture.candidate_id == "balanced":
+    elif spec.optimization_priority == "balanced" and candidate_profile == "balanced":
         bonus += 4.0
 
     if spec.offchip_memory_type == "HBM" and architecture.bus_width_bits >= 1024:

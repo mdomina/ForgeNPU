@@ -76,16 +76,16 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 ## LLM Integration
 
-- [ ] Attivare davvero il backend LLM live oltre il fallback euristico.
-- [ ] Usare prompt strutturati per generare varianti RTL candidate.
-- [ ] Confrontare output LLM con i seed RTL attuali tramite scoring automatico.
+- [x] Attivare davvero il backend LLM live oltre il fallback euristico.
+- [x] Usare prompt strutturati per generare varianti RTL candidate.
+- [x] Confrontare output LLM con i seed RTL attuali tramite scoring automatico.
 
 ## Dataset e Learning Loop
 
-- [ ] Salvare ogni run come sample riusabile per training/benchmark.
-- [ ] Tenere traccia di candidati buoni e cattivi con score e log completi.
-- [ ] Aggiungere best-of-N automatico.
-- [ ] Preparare il progetto per rejection sampling o RL da feedback EDA.
+- [x] Salvare ogni run come sample riusabile per training/benchmark.
+- [x] Tenere traccia di candidati buoni e cattivi con score e log completi.
+- [x] Aggiungere best-of-N automatico.
+- [x] Preparare il progetto per rejection sampling o RL da feedback EDA.
 
 ## Operativita'
 

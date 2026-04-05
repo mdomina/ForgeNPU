@@ -16,7 +16,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - `tile_compute_unit` seed capace di leggere e scrivere banchi distinti dello scratchpad per esperimenti di prefetch/ping-pong locali;
 - `top_npu` seed che decodifica gli slot del programma in `bank + local_addr`, usando davvero il banking del tile nel flow end-to-end;
 - `systolic_tile` seed verificato anche oltre il solo caso `2x2`, con testbench rettangolare dedicato per la parametrizzazione del tile;
-- default `ROWS`/`COLS` del seed RTL derivati dalla tile architetturale del candidato, entro un envelope compatto per mantenere verificabile il flow locale;
+- default `ROWS`/`COLS` del seed RTL propagati direttamente dalla tile architetturale del candidato;
 - controllo seed del `scheduler` configurabile su numero di slot, iterazioni di load/compute, descrittori minimi di memoria e clear finale;
 - primitive seed di `LOAD/STORE` con base address, stride e burst count, propagate nel `scheduler` e nel `top_npu`;
 - stato esplicito `FLUSH` nel `scheduler`, propagato fino al `tile_compute_unit` e al `systolic_tile` per separare il drain/reset della pipeline dall'azzeramento degli accumulatori;
@@ -26,11 +26,11 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
 - report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
-- harness locale per lint, simulazione e sintesi con fallback esplicito;
+- harness locale per lint, simulazione e sintesi con fallback esplicito, inclusa sintesi `yosys` bounded sui parametri dei casi `top_npu` per mantenere trattabile la regressione;
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del cluster e' ora separato in modo esplicito dal data-path del top-level, con banking, descrittori minimi, burst di writeback e flush della pipeline instradati dal modulo dedicato; inoltre la shape di default del cluster non e' piu' fissa a `2x2`, ma derivata dalla tile architetturale entro un envelope di verifica locale. Resta aperto il passo successivo: propagare integralmente tile size reale, partizionamento dati e interconnect dedicato senza riduzioni seed.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del cluster e' ora separato in modo esplicito dal data-path del top-level, con banking, descrittori minimi, burst di writeback e flush della pipeline instradati dal modulo dedicato; inoltre la shape di default del cluster viene propagata direttamente dalla tile architetturale reale, senza riduzione intermedia. Resta aperto il passo successivo: propagare anche `TILE_COUNT` reale e un interconnect piu' dedicato, senza l'attuale cap seed.
 
 ## Quick Start
 

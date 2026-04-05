@@ -115,6 +115,8 @@ class PipelineTest(unittest.TestCase):
                     / "systolic_tile.sv"
                 ).exists()
             )
+            expected_rows = int(result.architecture.tile_rows)
+            expected_cols = int(result.architecture.tile_cols)
             top_npu_rtl = (
                 Path(result.output_dir)
                 / "candidates"
@@ -129,10 +131,10 @@ class PipelineTest(unittest.TestCase):
                 / "rtl"
                 / "systolic_tile.sv"
             ).read_text(encoding="utf-8")
-            self.assertIn("parameter int ROWS = 4", top_npu_rtl)
-            self.assertIn("parameter int COLS = 4", top_npu_rtl)
-            self.assertIn("parameter int ROWS = 4", systolic_tile_rtl)
-            self.assertIn("parameter int COLS = 4", systolic_tile_rtl)
+            self.assertIn(f"parameter int ROWS = {expected_rows}", top_npu_rtl)
+            self.assertIn(f"parameter int COLS = {expected_cols}", top_npu_rtl)
+            self.assertIn(f"parameter int ROWS = {expected_rows}", systolic_tile_rtl)
+            self.assertIn(f"parameter int COLS = {expected_cols}", systolic_tile_rtl)
             self.assertTrue(
                 (
                     Path(result.output_dir)
@@ -281,7 +283,11 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(python_reference["passed"])
             self.assertIn("casi", python_reference["summary"])
             self.assertGreaterEqual(payload["score"], 0.0)
-            self.assertIn("4x4", " ".join(payload["generated"]["notes"]))
+            self.assertIn(
+                f"{expected_rows}x{expected_cols}",
+                " ".join(payload["generated"]["notes"]),
+            )
+            self.assertNotIn("ridotta", " ".join(payload["generated"]["notes"]))
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())
@@ -676,6 +682,73 @@ class HarnessTest(unittest.TestCase):
             self.assertEqual(result.return_code, 1)
             self.assertIn("top_npu_tb", result.summary)
             self.assertTrue(Path(result.log_path).exists())
+
+    def test_yosys_uses_bounded_top_level_parameters_from_reference_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "candidate"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            rtl_dir = output_dir / "rtl"
+            rtl_dir.mkdir(parents=True, exist_ok=True)
+            (rtl_dir / "mac_unit.sv").write_text("module mac_unit; endmodule\n", encoding="utf-8")
+            (rtl_dir / "top_npu.sv").write_text(
+                "\n".join(
+                    [
+                        "module top_npu #(",
+                        "  parameter int ROWS = 32,",
+                        "  parameter int COLS = 32,",
+                        "  parameter int DEPTH = 4,",
+                        "  parameter int TILE_COUNT = 4",
+                        ") ();",
+                        "endmodule",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            harness = VerificationHarness(output_dir)
+            reference_cases_path = output_dir / "verification_vectors.json"
+            reference_cases_path.write_text(
+                json.dumps(
+                    {
+                        "top_npu": [
+                            {"name": "single_tile", "rows": 2, "cols": 2, "depth": 4, "tile_count": 1},
+                            {"name": "dual_tile", "rows": 2, "cols": 3, "depth": 5, "tile_count": 2},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bundle = GeneratedDesignBundle(
+                rtl_files=[str(rtl_dir / "mac_unit.sv"), str(rtl_dir / "top_npu.sv")],
+                testbench_files=["tb/top_npu_tb.sv"],
+                primary_module="top_npu",
+                reference_cases_path=str(reference_cases_path),
+            )
+            commands = []
+
+            def fake_run(command, cwd, capture_output, text, check):
+                commands.append((command, cwd))
+                return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+            with patch("create_npu.harness.shutil.which", return_value="/usr/bin/yosys"):
+                with patch("create_npu.harness.subprocess.run", side_effect=fake_run):
+                    result = harness._run_yosys_synth(bundle)
+
+            self.assertTrue(result.available)
+            self.assertTrue(result.passed)
+            self.assertEqual(len(commands), 1)
+            script_path = output_dir / "run_yosys.ys"
+            self.assertTrue(script_path.exists())
+            script_payload = script_path.read_text(encoding="utf-8")
+            self.assertIn("chparam -set ROWS 2 -set COLS 3 -set DEPTH 5 -set TILE_COUNT 2 top_npu", script_payload)
+            self.assertIn("synth -top top_npu", script_payload)
+            bounded_top = output_dir / "yosys_rtl" / "top_npu.sv"
+            self.assertTrue(bounded_top.exists())
+            bounded_payload = bounded_top.read_text(encoding="utf-8")
+            self.assertIn("parameter int ROWS = 2", bounded_payload)
+            self.assertIn("parameter int COLS = 3", bounded_payload)
+            self.assertIn("parameter int DEPTH = 5", bounded_payload)
+            self.assertIn("parameter int TILE_COUNT = 2", bounded_payload)
 
 
 class BenchmarkTest(unittest.TestCase):

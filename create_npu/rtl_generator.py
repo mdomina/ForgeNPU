@@ -194,10 +194,9 @@ def emit_seed_rtl(
 
     if seed_tile_rows != architecture.tile_rows or seed_tile_cols != architecture.tile_cols:
         notes.append(
-            "Il seed RTL usa una tile di default "
-            f"{seed_tile_rows}x{seed_tile_cols}, derivata dalla tile architetturale "
-            f"{architecture.tile_rows}x{architecture.tile_cols} e ridotta per mantenere "
-            "la verifica locale trattabile."
+            "Il seed RTL ha sanitizzato la tile architetturale in "
+            f"{seed_tile_rows}x{seed_tile_cols} a partire da "
+            f"{architecture.tile_rows}x{architecture.tile_cols}."
         )
     else:
         notes.append(
@@ -265,10 +264,10 @@ def _seed_tile_count(tile_count: int) -> int:
     return max(1, min(int(tile_count), 4))
 
 
-def _seed_tile_shape(tile_rows: int, tile_cols: int, max_edge: int = 4) -> Tuple[int, int]:
+def _seed_tile_shape(tile_rows: int, tile_cols: int) -> Tuple[int, int]:
     return (
-        max(1, min(int(tile_rows), max_edge)),
-        max(1, min(int(tile_cols), max_edge)),
+        max(1, int(tile_rows)),
+        max(1, int(tile_cols)),
     )
 
 

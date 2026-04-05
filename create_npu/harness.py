@@ -1,3 +1,5 @@
+import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -177,18 +179,59 @@ class VerificationHarness:
             )
 
         yosys_script = self.output_dir / "run_yosys.ys"
-        script_body = "\n".join(
+        bounded_params = _bounded_synthesis_parameters(bundle)
+        rtl_files = (
+            self._prepare_bounded_yosys_rtl_files(
+                rtl_files=bundle.rtl_files,
+                bounded_params=bounded_params,
+            )
+            if bounded_params
+            else bundle.rtl_files
+        )
+        script_lines = [
+            "read_verilog -sv " + " ".join(_resolve_paths(rtl_files)),
+        ]
+        if bounded_params:
+            script_lines.append(
+                "chparam "
+                + " ".join(
+                    f"-set {name} {value}" for name, value in bounded_params.items()
+                )
+                + f" {bundle.primary_module}"
+            )
+        script_lines.extend(
             [
-                "read_verilog -sv " + " ".join(_resolve_paths(bundle.rtl_files)),
                 f"synth -top {bundle.primary_module}",
                 "stat",
             ]
         )
+        script_body = "\n".join(script_lines)
         yosys_script.write_text(script_body + "\n", encoding="utf-8")
 
         log_path = self.log_dir / "yosys_synth.log"
         command = [executable, "-s", str(yosys_script.resolve())]
         return self._run_command("yosys_synth", command, log_path)
+
+    def _prepare_bounded_yosys_rtl_files(
+        self,
+        rtl_files: List[str],
+        bounded_params: Dict[str, int],
+    ) -> List[str]:
+        bounded_dir = self.output_dir / "yosys_rtl"
+        bounded_dir.mkdir(parents=True, exist_ok=True)
+        bounded_files = []
+
+        for rtl_file in rtl_files:
+            source_path = Path(rtl_file)
+            bounded_path = bounded_dir / source_path.name
+            source_text = source_path.read_text(encoding="utf-8")
+            bounded_path.write_text(
+                _rewrite_parameter_defaults(source_text, bounded_params),
+                encoding="utf-8",
+            )
+            bounded_files.append(str(bounded_path))
+
+        return bounded_files
 
     def _run_command(self, name: str, command: List[str], log_path: Path) -> ToolResult:
         completed = subprocess.run(
@@ -324,3 +367,31 @@ def _first_non_zero_exit_code(result: Dict[str, object]) -> int:
 
 def _resolve_paths(paths: List[str]) -> List[str]:
     return [str(Path(path).resolve()) for path in paths]
+
+
+def _bounded_synthesis_parameters(bundle: GeneratedDesignBundle) -> Dict[str, int]:
+    if bundle.primary_module != "top_npu" or not bundle.reference_cases_path:
+        return {}
+
+    payload = json.loads(Path(bundle.reference_cases_path).read_text(encoding="utf-8"))
+    top_level_cases = payload.get("top_npu", [])
+    if not top_level_cases:
+        return {}
+
+    return {
+        "ROWS": max(1, max(int(case.get("rows", 1)) for case in top_level_cases)),
+        "COLS": max(1, max(int(case.get("cols", 1)) for case in top_level_cases)),
+        "DEPTH": max(1, max(int(case.get("depth", 1)) for case in top_level_cases)),
+        "TILE_COUNT": max(1, max(int(case.get("tile_count", 1)) for case in top_level_cases)),
+    }
+
+
+def _rewrite_parameter_defaults(source_text: str, bounded_params: Dict[str, int]) -> str:
+    rewritten = source_text
+    for param_name, param_value in bounded_params.items():
+        rewritten = re.sub(
+            rf"(parameter int {param_name} = )[^,\n]+",
+            rf"\g<1>{int(param_value)}",
+            rewritten,
+        )
+    return rewritten

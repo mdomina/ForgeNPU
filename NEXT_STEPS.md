@@ -46,7 +46,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 ## Evoluzione del Compute Cluster
 
 - [x] Estendere `systolic_tile` oltre il caso `2x2`.
-- [ ] Introdurre configurazione parametrica reale di tile size senza riduzione seed per la verifica locale.
+- [x] Introdurre configurazione parametrica reale di tile size senza riduzione seed per la verifica locale.
 - [x] Aggiungere gestione del flush della pipeline del tile.
 - [x] Separare chiaramente control-path e data-path del cluster.
 
@@ -64,6 +64,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Definire `top_npu` che assembli compute cluster, memoria e controllo.
 - [x] Aggiungere test end-to-end del top-level.
 - [x] Stimare throughput architetturale del sistema completo.
+- [ ] Propagare `TILE_COUNT` reale nel seed RTL senza l'attuale riduzione locale.
 
 ## Requirement System
 
@@ -94,9 +95,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- la tile size reale viene propagata in modo coerente al seed RTL del cluster e del top-level senza envelope seed ridotto;
-- i moduli seed del cluster continuano a restare verificabili anche con tile rettangolari o edge superiori a `4`;
-- il top-level mantiene la separazione attuale tra control-path e data-path anche con tile size piu' grandi;
+- `TILE_COUNT` reale viene propagato in modo coerente al seed RTL del cluster e del top-level senza cap seed a `4`;
+- il top-level mantiene la separazione attuale tra control-path e data-path anche con piu' tile seed reali;
+- l'aggregazione dei risultati e il control broadcast restano consistenti quando il numero di tile cresce;
 - i report restano coerenti con la nuova tile size reale, senza perdere metriche di memoria, controllo e compute;
 - i test del cluster e del top-level continuano a passare anche dentro il container Docker;
 - il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.

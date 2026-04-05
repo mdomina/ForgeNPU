@@ -66,7 +66,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Stimare throughput architetturale del sistema completo.
 - [x] Propagare `TILE_COUNT` reale nel seed RTL senza l'attuale riduzione locale.
 - [x] Modellare un interconnect seed piu' dedicato per il traffico multi-tile e il broadcast del controllo.
-- [ ] Introdurre handshake e backpressure nell'interconnect seed per DMA/load/store multi-tile.
+- [x] Introdurre handshake e backpressure nell'interconnect seed per DMA/load/store multi-tile.
 
 ## Requirement System
 
@@ -97,9 +97,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- l'interconnect seed espone handshake espliciti `valid/ready` o equivalente sui path DMA, `LOAD` e `STORE`;
-- il top-level mantiene la separazione attuale tra control-path, interconnect e data-path anche con backpressure multi-tile;
-- l'aggregazione dei risultati e il traffico multi-tile restano consistenti quando un tile o la memoria rallentano;
-- i report restano coerenti con il nuovo fabric, senza perdere metriche di memoria, controllo, interconnect e compute;
-- i test del cluster e del top-level continuano a passare anche dentro il container Docker;
-- il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.
+- il parser riconosce almeno un workload aggiuntivo oltre `dense_gemm` e `transformer`, senza degradare i casi esistenti;
+- architettura, scoring e reporting riflettono quel workload con campi e assunzioni esplicite;
+- le assunzioni implicite del requirement system diminuiscono, con piu' campi strutturati persistiti nella specifica;
+- i candidati generati restano verificabili senza regressioni nel flow seed RTL corrente;
+- i test Python, il benchmark locale e la regressione Docker full-toolchain restano verdi.

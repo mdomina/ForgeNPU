@@ -461,79 +461,158 @@ def cluster_interconnect_reference(
                 rows=rows,
                 cols=cols,
                 tile_count=sanitized_tile_count,
+                step=step,
             )
         )
     return snapshots
 
 
-def top_npu_reference(
+def top_npu_context_reference(
     steps: List[Dict[str, object]],
     rows: int = 2,
     cols: int = 2,
     depth: int = 4,
     tile_count: int = 1,
-) -> List[Dict[str, object]]:
-    scheduler_snapshots = scheduler_reference(steps=steps, rows=rows, cols=cols)
+) -> Dict[str, List[Dict[str, object]]]:
     sanitized_tile_count = _sanitize_tile_count(tile_count)
-    tile_enable_masks = [
-        _sanitize_tile_enable_mask(step.get("tile_enable_i"), sanitized_tile_count)
-        for step in steps
-    ]
-    control_snapshots = [
-        _cluster_control_outputs(
-            scheduler_snapshot=scheduler_snapshot,
-            tile_enable_mask=tile_enable_masks[step_index],
-        )
-        for step_index, scheduler_snapshot in enumerate(scheduler_snapshots)
-    ]
+    max_dim = max(rows, cols)
+    state = SCHEDULER_IDLE
+    slot_index = 0
+    load_index = 0
+    compute_index = 0
+    store_index = 0
+    program_slot_count = 2
+    program_load_iterations = 2
+    program_compute_iterations = 2
+    program_clear_on_done = True
+    scheduler_snapshots: List[Dict[str, object]] = []
+    control_snapshots: List[Dict[str, object]] = []
     idle_scheduler_snapshot = {
+        "state_o": SCHEDULER_IDLE,
+        "busy_o": 0,
+        "done_o": 0,
         "dma_valid_o": 0,
         "dma_write_weights_o": 0,
         "dma_addr_o": 0,
-        "dma_payload_o": [0 for _ in range(max(rows, cols))],
+        "dma_payload_o": [0 for _ in range(max_dim)],
         "load_vector_en_o": 0,
         "activation_read_addr_o": 0,
         "weight_read_addr_o": 0,
         "compute_en_o": 0,
         "flush_pipeline_o": 0,
         "clear_acc_o": 0,
+        "store_results_en_o": 0,
+        "result_write_addr_o": 0,
         "store_burst_index_o": 0,
     }
     idle_control_snapshot = _cluster_control_outputs(
         scheduler_snapshot=idle_scheduler_snapshot,
         tile_enable_mask=[0 for _ in range(sanitized_tile_count)],
     )
+    idle_step = {
+        "tile_dma_ready_i": [1 for _ in range(sanitized_tile_count)],
+        "tile_load_ready_i": [1 for _ in range(sanitized_tile_count)],
+        "store_ready_i": 1,
+    }
+    prev_control_snapshot = idle_control_snapshot
+
+    for step in steps:
+        scheduler_accepts = _cluster_interconnect_accepts(
+            control_snapshot=prev_control_snapshot,
+            step=step,
+            tile_count=sanitized_tile_count,
+        )
+        scheduler_step = dict(step)
+        scheduler_step.update(scheduler_accepts)
+        (
+            state,
+            slot_index,
+            load_index,
+            compute_index,
+            store_index,
+            program_slot_count,
+            program_load_iterations,
+            program_compute_iterations,
+            program_clear_on_done,
+        ) = _scheduler_next_context(
+            state=state,
+            slot_index=slot_index,
+            load_index=load_index,
+            compute_index=compute_index,
+            store_index=store_index,
+            step=scheduler_step,
+            rows=rows,
+            program_slot_count=program_slot_count,
+            program_load_iterations=program_load_iterations,
+            program_compute_iterations=program_compute_iterations,
+            program_clear_on_done=program_clear_on_done,
+        )
+        scheduler_snapshot = _scheduler_outputs(
+            state=state,
+            step=scheduler_step,
+            rows=rows,
+            cols=cols,
+            slot_index=slot_index,
+            load_index=load_index,
+            store_index=store_index,
+            program_slot_count=program_slot_count,
+        )
+        control_snapshot = _cluster_control_outputs(
+            scheduler_snapshot=scheduler_snapshot,
+            tile_enable_mask=_sanitize_tile_enable_mask(
+                step.get("tile_enable_i"), sanitized_tile_count
+            ),
+        )
+        scheduler_snapshots.append(scheduler_snapshot)
+        control_snapshots.append(control_snapshot)
+        prev_control_snapshot = control_snapshot
+
+    idle_interconnect_snapshot = _cluster_interconnect_outputs(
+        control_snapshot=idle_control_snapshot,
+        dma_payload=[0 for _ in range(max_dim)],
+        psums=[0 for _ in range(sanitized_tile_count * rows * cols)],
+        rows=rows,
+        cols=cols,
+        tile_count=sanitized_tile_count,
+        step=idle_step,
+    )
 
     tile_snapshots_by_index: List[List[Dict[str, object]]] = []
     for tile_index in range(sanitized_tile_count):
         tile_steps = []
-        for step_index in range(len(tile_enable_masks)):
-            delayed_scheduler_snapshot = (
-                scheduler_snapshots[step_index - 1]
+        for step_index in range(len(steps)):
+            cycle_interconnect_snapshot = (
+                _cluster_interconnect_outputs(
+                    control_snapshot=control_snapshots[step_index - 1],
+                    dma_payload=[
+                        int(value)
+                        for value in scheduler_snapshots[step_index - 1]["dma_payload_o"]
+                    ],
+                    psums=[0 for _ in range(sanitized_tile_count * rows * cols)],
+                    rows=rows,
+                    cols=cols,
+                    tile_count=sanitized_tile_count,
+                    step=steps[step_index],
+                )
                 if step_index > 0
-                else idle_scheduler_snapshot
-            )
-            delayed_control_snapshot = (
-                control_snapshots[step_index - 1]
-                if step_index > 0
-                else idle_control_snapshot
+                else idle_interconnect_snapshot
             )
             tile_steps.append(
                 {
-                    "dma_valid_i": delayed_control_snapshot["tile_dma_valid_o"][tile_index],
-                    "dma_write_weights_i": delayed_control_snapshot["dma_write_weights_o"],
-                    "dma_addr_i": delayed_control_snapshot["dma_local_addr_o"],
-                    "dma_payload_i": delayed_scheduler_snapshot["dma_payload_o"],
-                    "activation_write_bank_i": delayed_control_snapshot["dma_bank_select_o"],
-                    "weight_write_bank_i": delayed_control_snapshot["dma_bank_select_o"],
-                    "load_vector_en_i": delayed_control_snapshot["tile_load_vector_en_o"][tile_index],
-                    "activation_read_bank_i": delayed_control_snapshot["activation_read_bank_select_o"],
-                    "activation_read_addr_i": delayed_control_snapshot["activation_local_read_addr_o"],
-                    "weight_read_bank_i": delayed_control_snapshot["weight_read_bank_select_o"],
-                    "weight_read_addr_i": delayed_control_snapshot["weight_local_read_addr_o"],
-                    "compute_en_i": delayed_control_snapshot["tile_compute_en_o"][tile_index],
-                    "flush_pipeline_i": delayed_control_snapshot["tile_flush_pipeline_o"][tile_index],
-                    "clear_acc_i": delayed_control_snapshot["tile_clear_acc_o"][tile_index],
+                    "dma_valid_i": cycle_interconnect_snapshot["tile_dma_valid_o"][tile_index],
+                    "dma_write_weights_i": cycle_interconnect_snapshot["dma_write_weights_o"],
+                    "dma_addr_i": cycle_interconnect_snapshot["dma_local_addr_o"],
+                    "dma_payload_i": cycle_interconnect_snapshot["dma_payload_o"],
+                    "activation_write_bank_i": cycle_interconnect_snapshot["dma_bank_select_o"],
+                    "weight_write_bank_i": cycle_interconnect_snapshot["dma_bank_select_o"],
+                    "load_vector_en_i": cycle_interconnect_snapshot["tile_load_vector_en_o"][tile_index],
+                    "activation_read_bank_i": cycle_interconnect_snapshot["activation_read_bank_select_o"],
+                    "activation_read_addr_i": cycle_interconnect_snapshot["activation_local_read_addr_o"],
+                    "weight_read_bank_i": cycle_interconnect_snapshot["weight_read_bank_select_o"],
+                    "weight_read_addr_i": cycle_interconnect_snapshot["weight_local_read_addr_o"],
+                    "compute_en_i": cycle_interconnect_snapshot["tile_compute_en_o"][tile_index],
+                    "flush_pipeline_i": cycle_interconnect_snapshot["tile_flush_pipeline_o"][tile_index],
+                    "clear_acc_i": cycle_interconnect_snapshot["tile_clear_acc_o"][tile_index],
                 }
             )
         tile_snapshots_by_index.append(
@@ -545,8 +624,9 @@ def top_npu_reference(
             )
         )
 
-    snapshots: List[Dict[str, object]] = []
-    for step_index, scheduler_snapshot in enumerate(scheduler_snapshots):
+    interconnect_snapshots: List[Dict[str, object]] = []
+    top_snapshots: List[Dict[str, object]] = []
+    for step_index, step in enumerate(steps):
         psums: List[int] = []
         valids: List[int] = []
         for tile_index in range(sanitized_tile_count):
@@ -555,18 +635,19 @@ def top_npu_reference(
             valids.extend([int(value) for value in tile_snapshot["valids_o"]])
         interconnect_snapshot = _cluster_interconnect_outputs(
             control_snapshot=control_snapshots[step_index],
-            dma_payload=[int(value) for value in scheduler_snapshot["dma_payload_o"]],
+            dma_payload=[int(value) for value in scheduler_snapshots[step_index]["dma_payload_o"]],
             psums=psums,
             rows=rows,
             cols=cols,
             tile_count=sanitized_tile_count,
+            step=step,
         )
-
-        snapshots.append(
+        interconnect_snapshots.append(interconnect_snapshot)
+        top_snapshots.append(
             {
-                "scheduler_state_o": scheduler_snapshot["state_o"],
-                "busy_o": scheduler_snapshot["busy_o"],
-                "done_o": scheduler_snapshot["done_o"],
+                "scheduler_state_o": scheduler_snapshots[step_index]["state_o"],
+                "busy_o": scheduler_snapshots[step_index]["busy_o"],
+                "done_o": scheduler_snapshots[step_index]["done_o"],
                 "result_write_valid_o": interconnect_snapshot["result_write_valid_o"],
                 "result_write_addr_o": interconnect_snapshot["result_write_addr_o"],
                 "result_write_payload_o": interconnect_snapshot["result_write_payload_o"],
@@ -576,7 +657,28 @@ def top_npu_reference(
             }
         )
 
-    return snapshots
+    return {
+        "scheduler": scheduler_snapshots,
+        "control": control_snapshots,
+        "interconnect": interconnect_snapshots,
+        "top": top_snapshots,
+    }
+
+
+def top_npu_reference(
+    steps: List[Dict[str, object]],
+    rows: int = 2,
+    cols: int = 2,
+    depth: int = 4,
+    tile_count: int = 1,
+) -> List[Dict[str, object]]:
+    return top_npu_context_reference(
+        steps=steps,
+        rows=rows,
+        cols=cols,
+        depth=depth,
+        tile_count=tile_count,
+    )["top"]
 
 
 def scheduler_state_name(state: int) -> str:
@@ -828,7 +930,13 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
             expected = step["expected"]
             observed = observed_snapshots[step_idx]
             if (
-                observed["tile_dma_valid_o"] != expected["tile_dma_valid_o"]
+                observed["dma_accept_o"] != expected["dma_accept_o"]
+                or observed["load_accept_o"] != expected["load_accept_o"]
+                or observed["store_accept_o"] != expected["store_accept_o"]
+                or observed["dma_backpressure_o"] != expected["dma_backpressure_o"]
+                or observed["load_backpressure_o"] != expected["load_backpressure_o"]
+                or observed["store_backpressure_o"] != expected["store_backpressure_o"]
+                or observed["tile_dma_valid_o"] != expected["tile_dma_valid_o"]
                 or observed["dma_write_weights_o"] != expected["dma_write_weights_o"]
                 or observed["dma_bank_select_o"] != expected["dma_bank_select_o"]
                 or observed["dma_local_addr_o"] != expected["dma_local_addr_o"]
@@ -853,7 +961,10 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                 failures.append(
                     "cluster_interconnect/"
                     f"{case['name']}/step_{step_idx}: expected "
-                    f"({expected['tile_dma_valid_o']}, {expected['dma_write_weights_o']}, "
+                    f"({expected['dma_accept_o']}, {expected['load_accept_o']}, "
+                    f"{expected['store_accept_o']}, {expected['dma_backpressure_o']}, "
+                    f"{expected['load_backpressure_o']}, {expected['store_backpressure_o']}, "
+                    f"{expected['tile_dma_valid_o']}, {expected['dma_write_weights_o']}, "
                     f"{expected['dma_bank_select_o']}, {expected['dma_local_addr_o']}, "
                     f"{expected['dma_payload_o']}, {expected['tile_load_vector_en_o']}, "
                     f"{expected['activation_read_bank_select_o']}, "
@@ -864,7 +975,10 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{expected['tile_clear_acc_o']}, {expected['tile_store_results_en_o']}, "
                     f"{expected['result_write_valid_o']}, {expected['result_write_addr_o']}, "
                     f"{expected['result_write_payload_o']}, {expected['result_write_valid_mask_o']}), got "
-                    f"({observed['tile_dma_valid_o']}, {observed['dma_write_weights_o']}, "
+                    f"({observed['dma_accept_o']}, {observed['load_accept_o']}, "
+                    f"{observed['store_accept_o']}, {observed['dma_backpressure_o']}, "
+                    f"{observed['load_backpressure_o']}, {observed['store_backpressure_o']}, "
+                    f"{observed['tile_dma_valid_o']}, {observed['dma_write_weights_o']}, "
                     f"{observed['dma_bank_select_o']}, {observed['dma_local_addr_o']}, "
                     f"{observed['dma_payload_o']}, {observed['tile_load_vector_en_o']}, "
                     f"{observed['activation_read_bank_select_o']}, "
@@ -1019,34 +1133,54 @@ def _cluster_interconnect_outputs(
     rows: int,
     cols: int,
     tile_count: int,
+    step: Dict[str, object],
 ) -> Dict[str, object]:
     sanitized_tile_count = _sanitize_tile_count(tile_count)
     sanitized_dma_payload = [int(value) for value in dma_payload[: max(rows, cols)]]
     if len(sanitized_dma_payload) < max(rows, cols):
         sanitized_dma_payload.extend([0 for _ in range(max(rows, cols) - len(sanitized_dma_payload))])
+    accepts = _cluster_interconnect_accepts(
+        control_snapshot=control_snapshot,
+        step=step,
+        tile_count=sanitized_tile_count,
+    )
+    dma_accept = accepts["dma_accept_i"]
+    load_accept = accepts["load_accept_i"]
+    store_accept = accepts["store_accept_i"]
+    tile_dma_valid = _sanitize_tile_enable_mask(
+        control_snapshot.get("tile_dma_valid_o"), sanitized_tile_count
+    )
+    tile_load_vector_en = _sanitize_tile_enable_mask(
+        control_snapshot.get("tile_load_vector_en_o"), sanitized_tile_count
+    )
+    tile_store_results_en = _sanitize_tile_enable_mask(
+        control_snapshot.get("tile_store_results_en_o"), sanitized_tile_count
+    )
     store_payload, store_valid_mask = _store_segment_payload(
         psums=[int(value) for value in psums],
-        tile_enable_mask=_sanitize_tile_enable_mask(
-            control_snapshot.get("tile_store_results_en_o"), sanitized_tile_count
-        ),
+        tile_enable_mask=tile_store_results_en if store_accept else [0 for _ in range(sanitized_tile_count)],
         rows=rows,
         cols=cols,
         burst_index=int(control_snapshot.get("store_burst_index_o", 0)),
     )
-    result_write_valid = int(control_snapshot.get("store_results_en_o", 0))
+    result_write_valid = int(control_snapshot.get("store_results_en_o", 0) and store_accept)
     if not result_write_valid:
         store_payload = [0 for _ in psums]
         store_valid_mask = [0 for _ in psums]
     return {
-        "tile_dma_valid_o": _sanitize_tile_enable_mask(
-            control_snapshot.get("tile_dma_valid_o"), sanitized_tile_count
-        ),
+        "dma_accept_o": dma_accept,
+        "load_accept_o": load_accept,
+        "store_accept_o": store_accept,
+        "dma_backpressure_o": int(any(tile_dma_valid) and not dma_accept),
+        "load_backpressure_o": int(any(tile_load_vector_en) and not load_accept),
+        "store_backpressure_o": int(bool(control_snapshot.get("store_results_en_o", 0)) and not store_accept),
+        "tile_dma_valid_o": tile_dma_valid if dma_accept else [0 for _ in range(sanitized_tile_count)],
         "dma_write_weights_o": int(control_snapshot.get("dma_write_weights_o", 0)),
         "dma_bank_select_o": int(bool(control_snapshot.get("dma_bank_select_o", 0))),
         "dma_local_addr_o": int(control_snapshot.get("dma_local_addr_o", 0)),
         "dma_payload_o": sanitized_dma_payload,
-        "tile_load_vector_en_o": _sanitize_tile_enable_mask(
-            control_snapshot.get("tile_load_vector_en_o"), sanitized_tile_count
+        "tile_load_vector_en_o": (
+            tile_load_vector_en if load_accept else [0 for _ in range(sanitized_tile_count)]
         ),
         "activation_read_bank_select_o": int(
             bool(control_snapshot.get("activation_read_bank_select_o", 0))
@@ -1063,9 +1197,7 @@ def _cluster_interconnect_outputs(
         "tile_clear_acc_o": _sanitize_tile_enable_mask(
             control_snapshot.get("tile_clear_acc_o"), sanitized_tile_count
         ),
-        "tile_store_results_en_o": _sanitize_tile_enable_mask(
-            control_snapshot.get("tile_store_results_en_o"), sanitized_tile_count
-        ),
+        "tile_store_results_en_o": tile_store_results_en if store_accept else [0 for _ in range(sanitized_tile_count)],
         "result_write_valid_o": result_write_valid,
         "result_write_addr_o": int(control_snapshot.get("result_write_addr_o", 0)),
         "result_write_payload_o": store_payload,
@@ -1075,6 +1207,39 @@ def _cluster_interconnect_outputs(
 
 def _flatten_matrix(matrix: List[List[int]]) -> List[int]:
     return [value for row in matrix for value in row]
+
+
+def _cluster_interconnect_accepts(
+    control_snapshot: Dict[str, object],
+    step: Dict[str, object],
+    tile_count: int,
+) -> Dict[str, int]:
+    tile_dma_valid = _sanitize_tile_enable_mask(
+        control_snapshot.get("tile_dma_valid_o"), tile_count
+    )
+    tile_load_vector_en = _sanitize_tile_enable_mask(
+        control_snapshot.get("tile_load_vector_en_o"), tile_count
+    )
+    dma_ready_mask = _sanitize_ready_mask(step.get("tile_dma_ready_i"), tile_count)
+    load_ready_mask = _sanitize_ready_mask(step.get("tile_load_ready_i"), tile_count)
+    dma_accept = int(
+        (not any(tile_dma_valid))
+        or all((not tile_dma_valid[idx]) or dma_ready_mask[idx] for idx in range(tile_count))
+    )
+    load_accept = int(
+        (not any(tile_load_vector_en))
+        or all(
+            (not tile_load_vector_en[idx]) or load_ready_mask[idx]
+            for idx in range(tile_count)
+        )
+    )
+    store_valid = int(control_snapshot.get("store_results_en_o", 0))
+    store_accept = int((not store_valid) or _sanitize_accept(step.get("store_ready_i", 1)))
+    return {
+        "dma_accept_i": dma_accept,
+        "load_accept_i": load_accept,
+        "store_accept_i": store_accept,
+    }
 
 
 def _scheduler_next_context(
@@ -1094,6 +1259,9 @@ def _scheduler_next_context(
         step.get("store_burst_count_i", rows),
         rows=rows,
     )
+    dma_accept = _sanitize_accept(step.get("dma_accept_i", 1))
+    load_accept = _sanitize_accept(step.get("load_accept_i", 1))
+    store_accept = _sanitize_accept(step.get("store_accept_i", 1))
     if state == SCHEDULER_IDLE:
         if bool(step["start_i"]):
             return (
@@ -1119,6 +1287,18 @@ def _scheduler_next_context(
             program_clear_on_done,
         )
     if state == SCHEDULER_DMA_ACT:
+        if not dma_accept:
+            return (
+                SCHEDULER_DMA_ACT,
+                slot_index,
+                load_index,
+                compute_index,
+                store_index,
+                program_slot_count,
+                program_load_iterations,
+                program_compute_iterations,
+                program_clear_on_done,
+            )
         return (
             SCHEDULER_DMA_WGT,
             slot_index,
@@ -1131,6 +1311,18 @@ def _scheduler_next_context(
             program_clear_on_done,
         )
     if state == SCHEDULER_DMA_WGT:
+        if not dma_accept:
+            return (
+                SCHEDULER_DMA_WGT,
+                slot_index,
+                load_index,
+                compute_index,
+                store_index,
+                program_slot_count,
+                program_load_iterations,
+                program_compute_iterations,
+                program_clear_on_done,
+            )
         if slot_index + 1 < program_slot_count:
             return (
                 SCHEDULER_DMA_ACT,
@@ -1155,6 +1347,18 @@ def _scheduler_next_context(
             program_clear_on_done,
         )
     if state == SCHEDULER_LOAD:
+        if not load_accept:
+            return (
+                SCHEDULER_LOAD,
+                slot_index,
+                load_index,
+                compute_index,
+                store_index,
+                program_slot_count,
+                program_load_iterations,
+                program_compute_iterations,
+                program_clear_on_done,
+            )
         if load_index + 1 < program_load_iterations:
             return (
                 SCHEDULER_LOAD,
@@ -1227,6 +1431,18 @@ def _scheduler_next_context(
             program_clear_on_done,
         )
     if state == SCHEDULER_STORE:
+        if not store_accept:
+            return (
+                SCHEDULER_STORE,
+                slot_index,
+                load_index,
+                compute_index,
+                store_index,
+                program_slot_count,
+                program_load_iterations,
+                program_compute_iterations,
+                program_clear_on_done,
+            )
         if store_index + 1 < store_burst_count:
             return (
                 SCHEDULER_STORE,
@@ -1423,6 +1639,16 @@ def _sanitize_tile_enable_mask(raw_value: object, tile_count: int) -> List[int]:
         values = [1 if int(raw_value) else 0]
     padded = values[:tile_count] + [0 for _ in range(max(0, tile_count - len(values)))]
     return padded
+
+
+def _sanitize_ready_mask(raw_value: object, tile_count: int) -> List[int]:
+    if raw_value is None:
+        return [1 for _ in range(tile_count)]
+    return _sanitize_tile_enable_mask(raw_value, tile_count)
+
+
+def _sanitize_accept(raw_value: object) -> int:
+    return 1 if int(raw_value) else 0
 
 
 def _sanitize_compute_iterations(raw_value: object) -> int:

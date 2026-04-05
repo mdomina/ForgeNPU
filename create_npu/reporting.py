@@ -7,6 +7,7 @@ from create_npu.golden_model import (
     cluster_interconnect_reference,
     scheduler_reference,
     scheduler_state_name,
+    top_npu_context_reference,
     top_npu_reference,
 )
 from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle
@@ -94,50 +95,17 @@ def _build_case_report(
     depth = int(case.get("depth", 4))
     tile_count = int(case.get("tile_count", 1))
     steps = case["steps"]
-    scheduler_snapshots = scheduler_reference(steps=steps, rows=rows, cols=cols)
-    control_snapshots = cluster_control_reference(
-        steps=steps,
-        rows=rows,
-        cols=cols,
-        tile_count=tile_count,
-    )
-    top_snapshots = top_npu_reference(
+    top_context = top_npu_context_reference(
         steps=steps,
         rows=rows,
         cols=cols,
         depth=depth,
         tile_count=tile_count,
     )
-    interconnect_snapshots = cluster_interconnect_reference(
-        steps=[
-            {
-                "dma_payload_i": scheduler_snapshot["dma_payload_o"],
-                "tile_dma_valid_i": control_snapshot["tile_dma_valid_o"],
-                "dma_write_weights_i": control_snapshot["dma_write_weights_o"],
-                "dma_bank_select_i": control_snapshot["dma_bank_select_o"],
-                "dma_local_addr_i": control_snapshot["dma_local_addr_o"],
-                "tile_load_vector_en_i": control_snapshot["tile_load_vector_en_o"],
-                "activation_read_bank_select_i": control_snapshot["activation_read_bank_select_o"],
-                "activation_local_read_addr_i": control_snapshot["activation_local_read_addr_o"],
-                "weight_read_bank_select_i": control_snapshot["weight_read_bank_select_o"],
-                "weight_local_read_addr_i": control_snapshot["weight_local_read_addr_o"],
-                "tile_compute_en_i": control_snapshot["tile_compute_en_o"],
-                "tile_flush_pipeline_i": control_snapshot["tile_flush_pipeline_o"],
-                "tile_clear_acc_i": control_snapshot["tile_clear_acc_o"],
-                "tile_store_results_en_i": control_snapshot["tile_store_results_en_o"],
-                "store_results_en_i": control_snapshot["store_results_en_o"],
-                "result_write_addr_i": control_snapshot["result_write_addr_o"],
-                "store_burst_index_i": control_snapshot["store_burst_index_o"],
-                "tile_psums_i": top_snapshot["psums_o"],
-            }
-            for scheduler_snapshot, control_snapshot, top_snapshot in zip(
-                scheduler_snapshots, control_snapshots, top_snapshots
-            )
-        ],
-        rows=rows,
-        cols=cols,
-        tile_count=tile_count,
-    )
+    scheduler_snapshots = top_context["scheduler"]
+    control_snapshots = top_context["control"]
+    interconnect_snapshots = top_context["interconnect"]
+    top_snapshots = top_context["top"]
 
     trace = []
     for cycle, (scheduler_snapshot, control_snapshot, interconnect_snapshot, top_snapshot) in enumerate(
@@ -199,6 +167,12 @@ def _build_case_report(
                     "tile_store_results_en": [
                         int(value) for value in interconnect_snapshot["tile_store_results_en_o"]
                     ],
+                    "dma_accept": int(interconnect_snapshot["dma_accept_o"]),
+                    "load_accept": int(interconnect_snapshot["load_accept_o"]),
+                    "store_accept": int(interconnect_snapshot["store_accept_o"]),
+                    "dma_backpressure": int(interconnect_snapshot["dma_backpressure_o"]),
+                    "load_backpressure": int(interconnect_snapshot["load_backpressure_o"]),
+                    "store_backpressure": int(interconnect_snapshot["store_backpressure_o"]),
                     "result_write_valid": int(interconnect_snapshot["result_write_valid_o"]),
                     "result_write_addr": int(interconnect_snapshot["result_write_addr_o"]),
                     "result_write_valid_mask": [
@@ -273,6 +247,8 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         "weight_slot0_i",
         "weight_slot1_i",
         "tile_enable_i",
+        "tile_dma_ready_i",
+        "tile_load_ready_i",
         "slot_count_i",
         "load_iterations_i",
         "compute_iterations_i",
@@ -283,6 +259,7 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         "store_stride_i",
         "store_burst_count_i",
         "clear_on_done_i",
+        "store_ready_i",
     ]
     program = {}
     for field in program_fields:
@@ -351,6 +328,12 @@ def _empty_summary() -> Dict[str, Any]:
             "compute_fanout_cycles": 0,
             "store_lane_write_cycles": 0,
             "peak_store_lanes_per_cycle": 0,
+            "dma_backpressure_cycles": 0,
+            "load_backpressure_cycles": 0,
+            "store_backpressure_cycles": 0,
+            "dma_accept_cycles": 0,
+            "load_accept_cycles": 0,
+            "store_accept_cycles": 0,
         },
         "memory_path": {
             "dma_cycles": 0,
@@ -500,6 +483,20 @@ def _summarize_case_reports(
                 summary["interconnect_path"]["load_fanout_cycles"] += 1
             if interconnect_compute_active_tiles > 0:
                 summary["interconnect_path"]["compute_fanout_cycles"] += 1
+            if int(interconnect_path.get("dma_backpressure", 0)):
+                summary["interconnect_path"]["dma_backpressure_cycles"] += 1
+            if int(interconnect_path.get("load_backpressure", 0)):
+                summary["interconnect_path"]["load_backpressure_cycles"] += 1
+            if int(interconnect_path.get("store_backpressure", 0)):
+                summary["interconnect_path"]["store_backpressure_cycles"] += 1
+            if int(interconnect_path.get("dma_accept", 0)) and interconnect_dma_active_tiles > 0:
+                summary["interconnect_path"]["dma_accept_cycles"] += 1
+            if int(interconnect_path.get("load_accept", 0)) and interconnect_load_active_tiles > 0:
+                summary["interconnect_path"]["load_accept_cycles"] += 1
+            if int(interconnect_path.get("store_accept", 0)) and int(
+                interconnect_path.get("result_write_valid", 0)
+            ):
+                summary["interconnect_path"]["store_accept_cycles"] += 1
             summary["interconnect_path"]["store_lane_write_cycles"] += interconnect_store_lanes
             summary["interconnect_path"]["peak_store_lanes_per_cycle"] = max(
                 summary["interconnect_path"]["peak_store_lanes_per_cycle"],

@@ -1703,6 +1703,9 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
   input  logic [ADDR_WIDTH-1:0] store_stride_i,
   input  logic [1:0] store_burst_count_i,
   input  logic clear_on_done_i,
+  input  logic dma_accept_i,
+  input  logic load_accept_i,
+  input  logic store_accept_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i,
   input  logic signed [COLS*DATA_WIDTH-1:0] weight_slot0_i,
@@ -1843,30 +1846,36 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
         end
       end
       S_DMA_ACT: begin
-        state_d = S_DMA_WGT;
+        if (dma_accept_i) begin
+          state_d = S_DMA_WGT;
+        end
       end
       S_DMA_WGT: begin
-        if ((slot_index_q + 1'b1) < program_slot_count_q) begin
-          slot_index_d = slot_index_q + 1'b1;
-          state_d = S_DMA_ACT;
-        end else begin
-          load_index_d = ADDR_ZERO;
-          store_index_d = ADDR_ZERO;
-          state_d = S_LOAD;
+        if (dma_accept_i) begin
+          if ((slot_index_q + 1'b1) < program_slot_count_q) begin
+            slot_index_d = slot_index_q + 1'b1;
+            state_d = S_DMA_ACT;
+          end else begin
+            load_index_d = ADDR_ZERO;
+            store_index_d = ADDR_ZERO;
+            state_d = S_LOAD;
+          end
         end
       end
       S_LOAD: begin
-        if ((load_index_q + 1'b1) < program_load_iterations_q) begin
-          load_index_d = load_index_q + 1'b1;
-          state_d = S_LOAD;
-        end else if (program_compute_iterations_q != 4'd0) begin
-          compute_count_d = '0;
-          store_index_d = ADDR_ZERO;
-          state_d = S_COMPUTE;
-        end else if (program_clear_on_done_q) begin
-          state_d = S_CLEAR;
-        end else begin
-          state_d = S_DONE;
+        if (load_accept_i) begin
+          if ((load_index_q + 1'b1) < program_load_iterations_q) begin
+            load_index_d = load_index_q + 1'b1;
+            state_d = S_LOAD;
+          end else if (program_compute_iterations_q != 4'd0) begin
+            compute_count_d = '0;
+            store_index_d = ADDR_ZERO;
+            state_d = S_COMPUTE;
+          end else if (program_clear_on_done_q) begin
+            state_d = S_CLEAR;
+          end else begin
+            state_d = S_DONE;
+          end
         end
       end
       S_COMPUTE: begin
@@ -1879,12 +1888,14 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
         end
       end
       S_STORE: begin
-        if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
-          store_index_d = store_index_q + 1'b1;
-          state_d = S_STORE;
-        end else begin
-          store_index_d = ADDR_ZERO;
-          state_d = S_FLUSH;
+        if (store_accept_i) begin
+          if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
+            store_index_d = store_index_q + 1'b1;
+            state_d = S_STORE;
+          end else begin
+            store_index_d = ADDR_ZERO;
+            state_d = S_FLUSH;
+          end
         end
       end
       S_FLUSH: begin
@@ -2041,6 +2052,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic [ADDR_WIDTH-1:0] store_stride_i;
   logic [1:0] store_burst_count_i;
   logic clear_on_done_i;
+  logic dma_accept_i;
+  logic load_accept_i;
+  logic store_accept_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i;
   logic signed [COLS*DATA_WIDTH-1:0] weight_slot0_i;
@@ -2081,6 +2095,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .store_stride_i(store_stride_i),
     .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
+    .dma_accept_i(dma_accept_i),
+    .load_accept_i(load_accept_i),
+    .store_accept_i(store_accept_i),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
     .weight_slot0_i(weight_slot0_i),
@@ -2166,6 +2183,9 @@ def _scheduler_tb_template(operand_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b1;
+    dma_accept_i = 1'b1;
+    load_accept_i = 1'b1;
+    store_accept_i = 1'b1;
     activation_slot0_i = '0;
     activation_slot1_i = '0;
     weight_slot0_i = '0;
@@ -2442,10 +2462,12 @@ def _cluster_interconnect_template(
 ) (
   input  logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i,
   input  logic [TILE_COUNT-1:0] tile_dma_valid_i,
+  input  logic [TILE_COUNT-1:0] tile_dma_ready_i,
   input  logic dma_write_weights_i,
   input  logic dma_bank_select_i,
   input  logic [ADDR_WIDTH-1:0] dma_local_addr_i,
   input  logic [TILE_COUNT-1:0] tile_load_vector_en_i,
+  input  logic [TILE_COUNT-1:0] tile_load_ready_i,
   input  logic activation_read_bank_select_i,
   input  logic [ADDR_WIDTH-1:0] activation_local_read_addr_i,
   input  logic weight_read_bank_select_i,
@@ -2455,9 +2477,16 @@ def _cluster_interconnect_template(
   input  logic [TILE_COUNT-1:0] tile_clear_acc_i,
   input  logic [TILE_COUNT-1:0] tile_store_results_en_i,
   input  logic store_results_en_i,
+  input  logic store_ready_i,
   input  logic [ADDR_WIDTH-1:0] result_write_addr_i,
   input  logic [ADDR_WIDTH-1:0] store_burst_index_i,
   input  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] tile_psums_i,
+  output logic dma_accept_o,
+  output logic load_accept_o,
+  output logic store_accept_o,
+  output logic dma_backpressure_o,
+  output logic load_backpressure_o,
+  output logic store_backpressure_o,
   output logic [TILE_COUNT-1:0] tile_dma_valid_o,
   output logic dma_write_weights_o,
   output logic dma_bank_select_o,
@@ -2479,13 +2508,24 @@ def _cluster_interconnect_template(
   genvar store_tile_idx;
   genvar store_row_idx;
   genvar store_col_idx;
+  logic dma_has_targets;
+  logic load_has_targets;
 
-  assign tile_dma_valid_o = tile_dma_valid_i;
+  assign dma_has_targets = |tile_dma_valid_i;
+  assign load_has_targets = |tile_load_vector_en_i;
+  assign dma_accept_o = !dma_has_targets || &((~tile_dma_valid_i) | tile_dma_ready_i);
+  assign load_accept_o = !load_has_targets || &((~tile_load_vector_en_i) | tile_load_ready_i);
+  assign store_accept_o = !store_results_en_i || store_ready_i;
+  assign dma_backpressure_o = dma_has_targets && !dma_accept_o;
+  assign load_backpressure_o = load_has_targets && !load_accept_o;
+  assign store_backpressure_o = store_results_en_i && !store_accept_o;
+
+  assign tile_dma_valid_o = dma_accept_o ? tile_dma_valid_i : '0;
   assign dma_write_weights_o = dma_write_weights_i;
   assign dma_bank_select_o = dma_bank_select_i;
   assign dma_local_addr_o = dma_local_addr_i;
   assign dma_payload_o = dma_payload_i;
-  assign tile_load_vector_en_o = tile_load_vector_en_i;
+  assign tile_load_vector_en_o = load_accept_o ? tile_load_vector_en_i : '0;
   assign activation_read_bank_select_o = activation_read_bank_select_i;
   assign activation_local_read_addr_o = activation_local_read_addr_i;
   assign weight_read_bank_select_o = weight_read_bank_select_i;
@@ -2493,7 +2533,7 @@ def _cluster_interconnect_template(
   assign tile_compute_en_o = tile_compute_en_i;
   assign tile_flush_pipeline_o = tile_flush_pipeline_i;
   assign tile_clear_acc_o = tile_clear_acc_i;
-  assign result_write_valid_o = store_results_en_i;
+  assign result_write_valid_o = store_results_en_i && store_accept_o;
   assign result_write_addr_o = result_write_addr_i;
 
   generate
@@ -2503,10 +2543,12 @@ def _cluster_interconnect_template(
           localparam int STORE_LANE_IDX = (store_tile_idx * PE_COUNT) + (store_row_idx * COLS) + store_col_idx;
           localparam logic [ADDR_WIDTH-1:0] STORE_ROW_ADDR = store_row_idx[ADDR_WIDTH-1:0];
           assign result_write_valid_mask_o[STORE_LANE_IDX] =
+            store_accept_o &&
             tile_store_results_en_i[store_tile_idx] &&
             (store_burst_index_i == STORE_ROW_ADDR);
           assign result_write_payload_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] =
             (
+              store_accept_o &&
               tile_store_results_en_i[store_tile_idx] &&
               (store_burst_index_i == STORE_ROW_ADDR)
             ) ? tile_psums_i[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] : '0;
@@ -2533,10 +2575,12 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
 
   logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i;
   logic [TILE_COUNT-1:0] tile_dma_valid_i;
+  logic [TILE_COUNT-1:0] tile_dma_ready_i;
   logic dma_write_weights_i;
   logic dma_bank_select_i;
   logic [ADDR_WIDTH-1:0] dma_local_addr_i;
   logic [TILE_COUNT-1:0] tile_load_vector_en_i;
+  logic [TILE_COUNT-1:0] tile_load_ready_i;
   logic activation_read_bank_select_i;
   logic [ADDR_WIDTH-1:0] activation_local_read_addr_i;
   logic weight_read_bank_select_i;
@@ -2546,9 +2590,16 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
   logic [TILE_COUNT-1:0] tile_clear_acc_i;
   logic [TILE_COUNT-1:0] tile_store_results_en_i;
   logic store_results_en_i;
+  logic store_ready_i;
   logic [ADDR_WIDTH-1:0] result_write_addr_i;
   logic [ADDR_WIDTH-1:0] store_burst_index_i;
   logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] tile_psums_i;
+  logic dma_accept_o;
+  logic load_accept_o;
+  logic store_accept_o;
+  logic dma_backpressure_o;
+  logic load_backpressure_o;
+  logic store_backpressure_o;
   logic [TILE_COUNT-1:0] tile_dma_valid_o;
   logic dma_write_weights_o;
   logic dma_bank_select_o;
@@ -2577,10 +2628,12 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
   ) dut (
     .dma_payload_i(dma_payload_i),
     .tile_dma_valid_i(tile_dma_valid_i),
+    .tile_dma_ready_i(tile_dma_ready_i),
     .dma_write_weights_i(dma_write_weights_i),
     .dma_bank_select_i(dma_bank_select_i),
     .dma_local_addr_i(dma_local_addr_i),
     .tile_load_vector_en_i(tile_load_vector_en_i),
+    .tile_load_ready_i(tile_load_ready_i),
     .activation_read_bank_select_i(activation_read_bank_select_i),
     .activation_local_read_addr_i(activation_local_read_addr_i),
     .weight_read_bank_select_i(weight_read_bank_select_i),
@@ -2590,9 +2643,16 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
     .tile_clear_acc_i(tile_clear_acc_i),
     .tile_store_results_en_i(tile_store_results_en_i),
     .store_results_en_i(store_results_en_i),
+    .store_ready_i(store_ready_i),
     .result_write_addr_i(result_write_addr_i),
     .store_burst_index_i(store_burst_index_i),
     .tile_psums_i(tile_psums_i),
+    .dma_accept_o(dma_accept_o),
+    .load_accept_o(load_accept_o),
+    .store_accept_o(store_accept_o),
+    .dma_backpressure_o(dma_backpressure_o),
+    .load_backpressure_o(load_backpressure_o),
+    .store_backpressure_o(store_backpressure_o),
     .tile_dma_valid_o(tile_dma_valid_o),
     .dma_write_weights_o(dma_write_weights_o),
     .dma_bank_select_o(dma_bank_select_o),
@@ -2613,6 +2673,12 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
   );
 
   task automatic expect_outputs(
+    input logic expected_dma_accept,
+    input logic expected_load_accept,
+    input logic expected_store_accept,
+    input logic expected_dma_backpressure,
+    input logic expected_load_backpressure,
+    input logic expected_store_backpressure,
     input logic [TILE_COUNT-1:0] expected_tile_dma_valid,
     input logic expected_dma_write_weights,
     input logic expected_dma_bank,
@@ -2641,7 +2707,13 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
   );
     begin
       #1;
-      if (tile_dma_valid_o !== expected_tile_dma_valid ||
+      if (dma_accept_o !== expected_dma_accept ||
+          load_accept_o !== expected_load_accept ||
+          store_accept_o !== expected_store_accept ||
+          dma_backpressure_o !== expected_dma_backpressure ||
+          load_backpressure_o !== expected_load_backpressure ||
+          store_backpressure_o !== expected_store_backpressure ||
+          tile_dma_valid_o !== expected_tile_dma_valid ||
           dma_write_weights_o !== expected_dma_write_weights ||
           dma_bank_select_o !== expected_dma_bank ||
           dma_local_addr_o !== expected_dma_local_addr[ADDR_WIDTH-1:0] ||
@@ -2674,10 +2746,12 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
   initial begin
     dma_payload_i = '0;
     tile_dma_valid_i = '0;
+    tile_dma_ready_i = '1;
     dma_write_weights_i = 1'b0;
     dma_bank_select_i = 1'b0;
     dma_local_addr_i = '0;
     tile_load_vector_en_i = '0;
+    tile_load_ready_i = '1;
     activation_read_bank_select_i = 1'b0;
     activation_local_read_addr_i = '0;
     weight_read_bank_select_i = 1'b0;
@@ -2687,17 +2761,19 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
     tile_clear_acc_i = '0;
     tile_store_results_en_i = '0;
     store_results_en_i = 1'b0;
+    store_ready_i = 1'b1;
     result_write_addr_i = '0;
     store_burst_index_i = '0;
     tile_psums_i = '0;
-    expect_outputs(2'b00, 1'b0, 1'b0, 0, 0, 0, 2'b00, 1'b0, 0, 1'b0, 0, 2'b00, 2'b00, 2'b00, 1'b0, 0, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
+    expect_outputs(1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 1'b0, 2'b00, 1'b0, 1'b0, 0, 0, 0, 2'b00, 1'b0, 0, 1'b0, 0, 2'b00, 2'b00, 2'b00, 1'b0, 0, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
 
     dma_payload_i = {{8'sd2, 8'sd1}};
     tile_dma_valid_i = 2'b11;
+    tile_dma_ready_i = 2'b01;
     dma_write_weights_i = 1'b1;
     dma_bank_select_i = 1'b1;
     dma_local_addr_i = 1;
-    tile_load_vector_en_i = 2'b10;
+    tile_load_vector_en_i = 2'b00;
     activation_read_bank_select_i = 1'b0;
     activation_local_read_addr_i = 1;
     weight_read_bank_select_i = 1'b1;
@@ -2705,19 +2781,31 @@ def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str
     tile_compute_en_i = 2'b11;
     tile_flush_pipeline_i = 2'b00;
     tile_clear_acc_i = 2'b01;
-    tile_store_results_en_i = 2'b01;
-    store_results_en_i = 1'b1;
+    tile_store_results_en_i = 2'b00;
+    store_results_en_i = 1'b0;
     result_write_addr_i = 2;
     store_burst_index_i = 0;
     tile_psums_i = {{
       32'sd80, 32'sd70, 32'sd60, 32'sd50,
       32'sd40, 32'sd30, 32'sd20, 32'sd10
     }};
-    expect_outputs(2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b1, 2, 8'b00000011, 10, 20, 0, 0, 0, 0, 0, 0);
+    expect_outputs(1'b0, 1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 2'b00, 1'b1, 1'b1, 1, 1, 2, 2'b00, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b0, 2, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    tile_dma_ready_i = '1;
+    tile_load_vector_en_i = 2'b10;
+    tile_load_ready_i = 2'b00;
+    expect_outputs(1'b1, 1'b0, 1'b1, 1'b0, 1'b1, 1'b0, 2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b00, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b0, 2, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    tile_load_ready_i = '1;
+    tile_store_results_en_i = 2'b01;
+    store_results_en_i = 1'b1;
+    store_ready_i = 1'b0;
+    expect_outputs(1'b1, 1'b1, 1'b0, 1'b0, 1'b0, 1'b1, 2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b0, 2, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
 
     tile_store_results_en_i = 2'b11;
+    store_ready_i = 1'b1;
     store_burst_index_i = 1;
-    expect_outputs(2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b1, 2, 8'b11001100, 0, 0, 30, 40, 0, 0, 70, 80);
+    expect_outputs(1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 1'b0, 2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b1, 2, 8'b11001100, 0, 0, 30, 40, 0, 0, 70, 80);
 
     $display("cluster_interconnect_tb passed");
     $finish;
@@ -2743,6 +2831,9 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   input  logic rst_n,
   input  logic start_i,
   input  logic [TILE_COUNT-1:0] tile_enable_i,
+  input  logic [TILE_COUNT-1:0] tile_dma_ready_i,
+  input  logic [TILE_COUNT-1:0] tile_load_ready_i,
+  input  logic store_ready_i,
   input  logic [1:0] slot_count_i,
   input  logic [1:0] load_iterations_i,
   input  logic [3:0] compute_iterations_i,
@@ -2809,6 +2900,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   logic store_results_en_routed;
   logic [ADDR_WIDTH-1:0] result_write_addr_routed;
   logic [ADDR_WIDTH-1:0] store_burst_index_routed;
+  logic dma_accept;
+  logic load_accept;
+  logic store_accept;
+  logic dma_backpressure_unused;
+  logic load_backpressure_unused;
+  logic store_backpressure_unused;
   logic [TILE_COUNT-1:0] scratchpad_vector_valid_unused;
   logic [TILE_COUNT-1:0] dma_done_unused;
   logic [TILE_COUNT-1:0] dma_busy_unused;
@@ -2833,6 +2930,9 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .store_stride_i(store_stride_i),
     .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
+    .dma_accept_i(dma_accept),
+    .load_accept_i(load_accept),
+    .store_accept_i(store_accept),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
     .weight_slot0_i(weight_slot0_i),
@@ -2900,10 +3000,12 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   ) cluster_interconnect_inst (
     .dma_payload_i(dma_payload),
     .tile_dma_valid_i(control_tile_dma_valid),
+    .tile_dma_ready_i(tile_dma_ready_i),
     .dma_write_weights_i(control_dma_write_weights),
     .dma_bank_select_i(control_dma_bank_select),
     .dma_local_addr_i(control_dma_local_addr),
     .tile_load_vector_en_i(control_tile_load_vector_en),
+    .tile_load_ready_i(tile_load_ready_i),
     .activation_read_bank_select_i(control_activation_read_bank_select),
     .activation_local_read_addr_i(control_activation_local_read_addr),
     .weight_read_bank_select_i(control_weight_read_bank_select),
@@ -2913,9 +3015,16 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .tile_clear_acc_i(control_tile_clear_acc),
     .tile_store_results_en_i(control_tile_store_results_en),
     .store_results_en_i(store_results_en_routed),
+    .store_ready_i(store_ready_i),
     .result_write_addr_i(result_write_addr_routed),
     .store_burst_index_i(store_burst_index_routed),
     .tile_psums_i(psums_o),
+    .dma_accept_o(dma_accept),
+    .load_accept_o(load_accept),
+    .store_accept_o(store_accept),
+    .dma_backpressure_o(dma_backpressure_unused),
+    .load_backpressure_o(load_backpressure_unused),
+    .store_backpressure_o(store_backpressure_unused),
     .tile_dma_valid_o(fabric_tile_dma_valid),
     .dma_write_weights_o(fabric_dma_write_weights),
     .dma_bank_select_o(fabric_dma_bank_select),
@@ -2976,6 +3085,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     primary_case = _top_npu_sequence_case()
     short_case = _top_npu_short_sequence_case()
     dual_tile_case = _top_npu_dual_tile_sequence_case()
+    backpressure_case = _top_npu_backpressure_sequence_case()
     return f"""module top_npu_tb;
   localparam int DATA_WIDTH = {operand_width};
   localparam int ACC_WIDTH = {acc_width};
@@ -3000,6 +3110,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   logic rst_n;
   logic start_i;
   logic [TILE_COUNT-1:0] tile_enable_i;
+  logic [TILE_COUNT-1:0] tile_dma_ready_i;
+  logic [TILE_COUNT-1:0] tile_load_ready_i;
+  logic store_ready_i;
   logic [1:0] slot_count_i;
   logic [1:0] load_iterations_i;
   logic [3:0] compute_iterations_i;
@@ -3036,6 +3149,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     .rst_n(rst_n),
     .start_i(start_i),
     .tile_enable_i(tile_enable_i),
+    .tile_dma_ready_i(tile_dma_ready_i),
+    .tile_load_ready_i(tile_load_ready_i),
+    .store_ready_i(store_ready_i),
     .slot_count_i(slot_count_i),
     .load_iterations_i(load_iterations_i),
     .compute_iterations_i(compute_iterations_i),
@@ -3159,6 +3275,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     rst_n = 1'b0;
     start_i = 1'b0;
     tile_enable_i = 2'b01;
+    tile_dma_ready_i = '1;
+    tile_load_ready_i = '1;
+    store_ready_i = 1'b1;
     slot_count_i = 2'd2;
     load_iterations_i = 2'd2;
     compute_iterations_i = 4'd2;
@@ -3188,6 +3307,9 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
 
     rst_n = 1'b0;
     tile_enable_i = 2'b01;
+    tile_dma_ready_i = '1;
+    tile_load_ready_i = '1;
+    store_ready_i = 1'b1;
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
     slot_count_i = 2'd1;
@@ -3205,10 +3327,33 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
 
     rst_n = 1'b0;
     tile_enable_i = 2'b11;
+    tile_dma_ready_i = '1;
+    tile_load_ready_i = '1;
+    store_ready_i = 1'b1;
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
 
 {_render_top_npu_tb_steps(dual_tile_case)}
+
+    rst_n = 1'b0;
+    tile_enable_i = 2'b01;
+    tile_dma_ready_i = '1;
+    tile_load_ready_i = '1;
+    store_ready_i = 1'b1;
+    repeat (2) @(posedge clk);
+    rst_n = 1'b1;
+    slot_count_i = 2'd1;
+    load_iterations_i = 2'd1;
+    compute_iterations_i = 4'd1;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd1;
+    clear_on_done_i = 1'b0;
+
+{_render_top_npu_tb_steps(backpressure_case)}
 
     $display("top_npu_tb passed");
     $finish;
@@ -3422,11 +3567,22 @@ def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
 
 def _render_top_npu_tb_steps(case: Dict[str, object], total_pe_count: int = 8) -> str:
     lines = []
+    tile_count = int(case.get("tile_count", 1))
     for step in case["steps"]:
         expected = step["expected"]
         psums = list(expected["psums_o"]) + [0 for _ in range(max(0, total_pe_count - len(expected["psums_o"])))]
         store_mask = _format_logic_literal(expected.get("result_write_valid_mask_o", []), total_pe_count)
         valids = _format_logic_literal(expected["valids_o"], total_pe_count)
+        if "tile_dma_ready_i" in step:
+            lines.append(
+                f"    tile_dma_ready_i = {_format_logic_literal(step['tile_dma_ready_i'], tile_count)};"
+            )
+        if "tile_load_ready_i" in step:
+            lines.append(
+                f"    tile_load_ready_i = {_format_logic_literal(step['tile_load_ready_i'], tile_count)};"
+            )
+        if "store_ready_i" in step:
+            lines.append(f"    store_ready_i = 1'b{int(step['store_ready_i'])};")
         lines.append(
             "    step_and_expect("
             f"1'b{int(step['start_i'])}, "
@@ -3549,10 +3705,11 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
         {
             "dma_payload_i": [1, 2],
             "tile_dma_valid_i": [1, 1],
+            "tile_dma_ready_i": [1, 0],
             "dma_write_weights_i": 1,
             "dma_bank_select_i": 1,
             "dma_local_addr_i": 1,
-            "tile_load_vector_en_i": [0, 1],
+            "tile_load_vector_en_i": [0, 0],
             "activation_read_bank_select_i": 0,
             "activation_local_read_addr_i": 1,
             "weight_read_bank_select_i": 1,
@@ -3560,8 +3717,8 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
             "tile_compute_en_i": [1, 1],
             "tile_flush_pipeline_i": [0, 0],
             "tile_clear_acc_i": [1, 0],
-            "tile_store_results_en_i": [1, 0],
-            "store_results_en_i": 1,
+            "tile_store_results_en_i": [0, 0],
+            "store_results_en_i": 0,
             "result_write_addr_i": 2,
             "store_burst_index_i": 0,
             "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
@@ -3569,10 +3726,34 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
         {
             "dma_payload_i": [1, 2],
             "tile_dma_valid_i": [1, 1],
+            "tile_dma_ready_i": [1, 1],
             "dma_write_weights_i": 1,
             "dma_bank_select_i": 1,
             "dma_local_addr_i": 1,
             "tile_load_vector_en_i": [0, 1],
+            "tile_load_ready_i": [0, 0],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 1,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [1, 1],
+            "tile_flush_pipeline_i": [0, 0],
+            "tile_clear_acc_i": [1, 0],
+            "tile_store_results_en_i": [0, 0],
+            "store_results_en_i": 0,
+            "result_write_addr_i": 2,
+            "store_burst_index_i": 0,
+            "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
+        },
+        {
+            "dma_payload_i": [1, 2],
+            "tile_dma_valid_i": [1, 1],
+            "tile_dma_ready_i": [1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 1,
+            "tile_load_vector_en_i": [0, 1],
+            "tile_load_ready_i": [1, 1],
             "activation_read_bank_select_i": 0,
             "activation_local_read_addr_i": 1,
             "weight_read_bank_select_i": 1,
@@ -3582,6 +3763,30 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
             "tile_clear_acc_i": [1, 0],
             "tile_store_results_en_i": [1, 1],
             "store_results_en_i": 1,
+            "store_ready_i": 0,
+            "result_write_addr_i": 2,
+            "store_burst_index_i": 1,
+            "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
+        },
+        {
+            "dma_payload_i": [1, 2],
+            "tile_dma_valid_i": [1, 1],
+            "tile_dma_ready_i": [1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 1,
+            "tile_load_vector_en_i": [0, 1],
+            "tile_load_ready_i": [1, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 1,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [1, 1],
+            "tile_flush_pipeline_i": [0, 0],
+            "tile_clear_acc_i": [1, 0],
+            "tile_store_results_en_i": [1, 1],
+            "store_results_en_i": 1,
+            "store_ready_i": 1,
             "result_write_addr_i": 2,
             "store_burst_index_i": 1,
             "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
@@ -3668,6 +3873,44 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
     return {
         "name": "dual_tile_broadcast_compute_top",
         "tile_count": 2,
+        "rows": 2,
+        "cols": 2,
+        "depth": 4,
+        "steps": steps,
+    }
+
+
+def _top_npu_backpressure_sequence_case() -> Dict[str, object]:
+    vectors = _program_seed_vectors()
+    vectors["slot_count_i"] = 1
+    vectors["load_iterations_i"] = 1
+    vectors["compute_iterations_i"] = 1
+    vectors["store_burst_count_i"] = 1
+    vectors["clear_on_done_i"] = 0
+    starts = [1] + [0 for _ in range(10)]
+    steps = []
+    for step_index, start_value in enumerate(starts):
+        payload = dict(vectors)
+        payload["start_i"] = start_value
+        payload["tile_dma_ready_i"] = [1]
+        payload["tile_load_ready_i"] = [1]
+        payload["store_ready_i"] = 1
+        if step_index == 1:
+            payload["tile_dma_ready_i"] = [0]
+        if step_index == 4:
+            payload["tile_load_ready_i"] = [0]
+        if step_index == 7:
+            payload["store_ready_i"] = 0
+        steps.append(payload)
+    for payload, expected in zip(
+        steps,
+        top_npu_reference(steps=steps, rows=2, cols=2, depth=4, tile_count=1),
+    ):
+        payload["expected"] = expected
+
+    return {
+        "name": "single_tile_backpressure_top",
+        "tile_count": 1,
         "rows": 2,
         "cols": 2,
         "depth": 4,
@@ -4325,6 +4568,7 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
             _top_npu_sequence_case(),
             _top_npu_short_sequence_case(),
             _top_npu_dual_tile_sequence_case(),
+            _top_npu_backpressure_sequence_case(),
         ],
     }
 

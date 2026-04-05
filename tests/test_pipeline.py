@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from create_npu.architect import generate_candidate_architectures, plan_architecture
 from create_npu.benchmark import run_regression_benchmark
+from create_npu.compiler import compile_seed_program, compiled_program_seed_vectors
 from create_npu.harness import VerificationHarness
 from create_npu.models import (
     ArchitectureCandidate,
@@ -86,6 +87,53 @@ class RequirementParserTest(unittest.TestCase):
         self.assertEqual(spec.preferred_dataflow, "systolic")
         self.assertEqual(spec.sparsity_support, "structured")
         self.assertEqual(spec.sequence_length, 4096)
+
+
+class CompilerTest(unittest.TestCase):
+    def test_compile_seed_program_for_transformer(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 20 TOPS transformer con sequence length 4096 e batch 1-8.",
+            numeric_precision="INT8",
+            throughput_value=20.0,
+            throughput_unit="TOPS",
+            workload_type="transformer",
+            sequence_length=4096,
+            batch_min=1,
+            batch_max=8,
+            target_frequency_mhz=1000.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        self.assertEqual(program.tiling_strategy, "sequence_blocking")
+        self.assertEqual(program.slot_count, 2)
+        self.assertEqual(program.load_iterations, 2)
+        self.assertEqual(program.compute_iterations, 4)
+        self.assertEqual(program.store_burst_count, 2)
+        self.assertEqual(program.clear_on_done, True)
+        self.assertGreaterEqual(program.active_tile_count, 1)
+
+    def test_compile_seed_program_for_sparse_workload(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS sparse.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="sparse_linear_algebra",
+            batch_min=1,
+            batch_max=1,
+            target_frequency_mhz=900.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+        vectors = compiled_program_seed_vectors(program)
+
+        self.assertEqual(program.tiling_strategy, "sparse_stream_compaction")
+        self.assertEqual(program.slot_count, 1)
+        self.assertEqual(program.load_iterations, 1)
+        self.assertEqual(program.compute_iterations, 1)
+        self.assertEqual(vectors["store_burst_count_i"], 1)
+        self.assertEqual(vectors["clear_on_done_i"], 1)
 
 
 class ArchitecturePlanningTest(unittest.TestCase):
@@ -361,6 +409,14 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "verification_vectors.json"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "compiled_program.json"
                 ).exists()
             )
             self.assertTrue(
@@ -904,6 +960,12 @@ class PipelineTest(unittest.TestCase):
                 "execution_report.json",
                 " ".join(balanced_candidate["generated"]["supporting_files"]),
             )
+            self.assertIn(
+                "compiled_program.json",
+                " ".join(balanced_candidate["generated"]["supporting_files"]),
+            )
+            self.assertIn("compiled_program", report["summary"])
+            self.assertIn("tiling_strategy", report["summary"]["compiled_program"])
 
     def test_pipeline_handles_convolution_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -946,6 +1008,14 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 report_payload["summary"]["requirement_profile"]["kernel_size"],
                 3,
+            )
+            self.assertEqual(
+                report_payload["summary"]["compiled_program"]["tiling_strategy"],
+                "weight_stationary_window",
+            )
+            self.assertEqual(
+                report_payload["summary"]["compiled_program"]["slot_count"],
+                2,
             )
 
     def test_pipeline_archives_dataset_samples(self) -> None:
@@ -1540,7 +1610,7 @@ def _make_fake_pipeline_result(
                 "memory_path": {
                     "dma_cycles": 11,
                     "load_cycles": 8,
-                    "store_cycles": 7,
+                    "store_cycles": 7 if requested_backend == "heuristic" else 4,
                     "working_set_utilization": 0.5,
                     "total_dma_bits_transferred": 176,
                     "total_store_bits_transferred": 576,

@@ -80,6 +80,12 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Usare prompt strutturati per generare varianti RTL candidate.
 - [x] Confrontare output LLM con i seed RTL attuali tramite scoring automatico.
 
+## Compiler e Mapping
+
+- [x] Introdurre un layer compiler/mapping che traduca workload e requirement in un programma seed `LOAD/COMPUTE/STORE`.
+- [ ] Estendere il compiler a shape/operatori reali oltre i descrittori seed sintetici correnti.
+- [ ] Collegare il compiler a benchmark workload-specifici piu' ricchi.
+
 ## Dataset e Learning Loop
 
 - [x] Salvare ogni run come sample riusabile per training/benchmark.
@@ -97,8 +103,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- il parser riconosce almeno un workload aggiuntivo oltre `dense_gemm` e `transformer`, senza degradare i casi esistenti;
-- architettura, scoring e reporting riflettono quel workload con campi e assunzioni esplicite;
-- le assunzioni implicite del requirement system diminuiscono, con piu' campi strutturati persistiti nella specifica;
-- i candidati generati restano verificabili senza regressioni nel flow seed RTL corrente;
+- il flow compila un programma seed `LOAD/COMPUTE/STORE` coerente con workload, batch e mapping base del candidato;
+- il programma compilato e' persistito negli artifact della run e riportato in `design_intent` e `execution_report`;
+- i vettori di verifica top-level riflettono il programma compilato senza rompere il flow seed RTL corrente;
 - i test Python, il benchmark locale e la regressione Docker full-toolchain restano verdi.

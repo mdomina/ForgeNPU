@@ -106,7 +106,7 @@ def _benchmark_cases(llm_model: Optional[str]) -> List[Dict[str, Any]]:
                 (("top_level_case_count",), 4),
                 (("total_cycles",), 45),
                 (("compute_path", "compute_cycles"), 5),
-                (("memory_path", "store_cycles"), 7),
+                (("memory_path", "store_cycles"), 4),
                 (("top_npu_throughput", "estimated_effective_tops"), 1.137778),
             ],
             "required_supporting_files": ["llm_request.json"],

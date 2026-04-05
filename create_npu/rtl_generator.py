@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from create_npu.compiler import compile_seed_program, compiled_program_seed_vectors
 from create_npu.golden_model import (
     cluster_control_reference,
     cluster_interconnect_reference,
@@ -34,6 +35,7 @@ def emit_seed_rtl(
         architecture.tile_cols,
     )
     seed_tile_count = _seed_tile_count(architecture.tile_count)
+    compiled_program = compile_seed_program(spec=spec, architecture=architecture)
 
     mac_unit_path = rtl_dir / "mac_unit.sv"
     mac_unit_path.write_text(
@@ -205,18 +207,27 @@ def emit_seed_rtl(
 
     intent_path = output_dir / "design_intent.md"
     intent_path.write_text(
-        _design_intent_template(spec=spec, architecture=architecture),
+        _design_intent_template(
+            spec=spec,
+            architecture=architecture,
+            compiled_program=compiled_program.to_dict(),
+        ),
         encoding="utf-8",
     )
 
     reference_cases_path = output_dir / "verification_vectors.json"
     reference_cases_path.write_text(
         json.dumps(
-            _reference_cases(),
+            _reference_cases(compiled_program=compiled_program.to_dict()),
             indent=2,
             sort_keys=True,
         )
         + "\n",
+        encoding="utf-8",
+    )
+    compiled_program_path = output_dir / "compiled_program.json"
+    compiled_program_path.write_text(
+        json.dumps(compiled_program.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -258,8 +269,13 @@ def emit_seed_rtl(
     notes.append(
         "Il cluster seed separa ora il control-path nel modulo `cluster_control` e il fanout multi-tile nel modulo `cluster_interconnect`, lasciando a `top_npu` il solo assemblaggio del top-level."
     )
+    notes.append(
+        "Compiler seed attivo: programma `LOAD/COMPUTE/STORE` compilato con "
+        f"{compiled_program.slot_count} slot, {compiled_program.load_iterations} load e "
+        f"{compiled_program.compute_iterations} compute."
+    )
 
-    supporting_files = [str(intent_path), str(reference_cases_path)]
+    supporting_files = [str(intent_path), str(reference_cases_path), str(compiled_program_path)]
     if extra_supporting_files:
         supporting_files.extend(extra_supporting_files)
 
@@ -3376,7 +3392,11 @@ endmodule
 """
 
 
-def _program_seed_vectors() -> Dict[str, object]:
+def _program_seed_vectors(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    if compiled_program:
+        from create_npu.compiler import CompiledProgram
+
+        return compiled_program_seed_vectors(CompiledProgram(**compiled_program))
     return {
         "activation_slot0_i": [1, 2],
         "activation_slot1_i": [3, 4],
@@ -3620,8 +3640,8 @@ def _render_top_npu_tb_steps(case: Dict[str, object], total_pe_count: int = 8) -
     return "\n".join(lines)
 
 
-def _scheduler_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _scheduler_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     starts = [1] + [0 for _ in range(13)]
     steps = []
     for start_value in starts:
@@ -3640,8 +3660,8 @@ def _scheduler_sequence_case() -> Dict[str, object]:
     }
 
 
-def _scheduler_short_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _scheduler_short_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     vectors["slot_count_i"] = 1
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
@@ -3664,8 +3684,8 @@ def _scheduler_short_sequence_case() -> Dict[str, object]:
     }
 
 
-def _cluster_control_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _cluster_control_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     vectors["slot_count_i"] = 1
     vectors["load_iterations_i"] = 1
     vectors["compute_iterations_i"] = 1
@@ -3822,8 +3842,8 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
     }
 
 
-def _top_npu_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _top_npu_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     starts = [1] + [0 for _ in range(13)]
     steps = []
     for start_value in starts:
@@ -3843,8 +3863,8 @@ def _top_npu_sequence_case() -> Dict[str, object]:
     }
 
 
-def _top_npu_short_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _top_npu_short_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     vectors["slot_count_i"] = 1
     vectors["load_iterations_i"] = 2
     vectors["compute_iterations_i"] = 1
@@ -3868,8 +3888,8 @@ def _top_npu_short_sequence_case() -> Dict[str, object]:
     }
 
 
-def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _top_npu_dual_tile_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     vectors["tile_enable_i"] = [1, 1]
     vectors["slot_count_i"] = 1
     vectors["load_iterations_i"] = 2
@@ -3894,8 +3914,8 @@ def _top_npu_dual_tile_sequence_case() -> Dict[str, object]:
     }
 
 
-def _top_npu_backpressure_sequence_case() -> Dict[str, object]:
-    vectors = _program_seed_vectors()
+def _top_npu_backpressure_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
     vectors["slot_count_i"] = 1
     vectors["load_iterations_i"] = 1
     vectors["compute_iterations_i"] = 1
@@ -3932,8 +3952,9 @@ def _top_npu_backpressure_sequence_case() -> Dict[str, object]:
     }
 
 
-def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
+def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     return {
+        "compiled_program": compiled_program or {},
         "mac_unit": [
             {
                 "name": "positive_accumulate",
@@ -4575,20 +4596,25 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
                 ],
             }
         ],
-        "scheduler": [_scheduler_sequence_case(), _scheduler_short_sequence_case()],
-        "cluster_control": [_cluster_control_sequence_case()],
+        "scheduler": [
+            _scheduler_sequence_case(compiled_program=compiled_program),
+            _scheduler_short_sequence_case(compiled_program=compiled_program),
+        ],
+        "cluster_control": [_cluster_control_sequence_case(compiled_program=compiled_program)],
         "cluster_interconnect": [_cluster_interconnect_sequence_case()],
         "top_npu": [
-            _top_npu_sequence_case(),
-            _top_npu_short_sequence_case(),
-            _top_npu_dual_tile_sequence_case(),
-            _top_npu_backpressure_sequence_case(),
+            _top_npu_sequence_case(compiled_program=compiled_program),
+            _top_npu_short_sequence_case(compiled_program=compiled_program),
+            _top_npu_dual_tile_sequence_case(compiled_program=compiled_program),
+            _top_npu_backpressure_sequence_case(compiled_program=compiled_program),
         ],
     }
 
 
 def _design_intent_template(
-    spec: RequirementSpec, architecture: ArchitectureCandidate
+    spec: RequirementSpec,
+    architecture: ArchitectureCandidate,
+    compiled_program: Optional[Dict[str, object]] = None,
 ) -> str:
     seed_tile_rows, seed_tile_cols = _seed_tile_shape(
         architecture.tile_rows,
@@ -4598,6 +4624,12 @@ def _design_intent_template(
     assumptions = "\n".join(f"- {line}" for line in spec.assumptions) or "- Nessuna"
     ambiguities = "\n".join(f"- {line}" for line in spec.ambiguities) or "- Nessuna"
     modules = "\n".join(f"- {name}" for name in architecture.modules)
+    compiler_rationale = "\n".join(
+        f"- {line}" for line in (compiled_program or {}).get("rationale", [])
+    ) or "- Nessuna"
+    tile_enable_mask = ", ".join(
+        str(int(value)) for value in (compiled_program or {}).get("tile_enable_mask", [])
+    ) or "1"
 
     return f"""# Design Intent
 
@@ -4647,4 +4679,25 @@ def _design_intent_template(
 ## Planned Modules
 
 {modules}
+
+## Compiled Program
+
+- Nome: {(compiled_program or {}).get("name", "seed_program")}
+- Strategia di tiling: {(compiled_program or {}).get("tiling_strategy", "seed")}
+- Tile attivi: {(compiled_program or {}).get("active_tile_count", 1)} / {(compiled_program or {}).get("tile_count", architecture.tile_count)}
+- Maschera tile attivi: {tile_enable_mask}
+- Slot count: {(compiled_program or {}).get("slot_count", 2)}
+- Load iterations: {(compiled_program or {}).get("load_iterations", 2)}
+- Compute iterations: {(compiled_program or {}).get("compute_iterations", 2)}
+- Store burst count: {(compiled_program or {}).get("store_burst_count", 2)}
+- Activation base addr: {(compiled_program or {}).get("activation_base_addr", 0)}
+- Weight base addr: {(compiled_program or {}).get("weight_base_addr", 0)}
+- Result base addr: {(compiled_program or {}).get("result_base_addr", 2)}
+- Slot stride: {(compiled_program or {}).get("slot_stride", 1)}
+- Store stride: {(compiled_program or {}).get("store_stride", 1)}
+- Clear on done: {(compiled_program or {}).get("clear_on_done", True)}
+
+## Compiler Rationale
+
+{compiler_rationale}
 """

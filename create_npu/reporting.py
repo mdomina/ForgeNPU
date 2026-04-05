@@ -82,6 +82,7 @@ def _build_execution_report(
         architecture=architecture,
         operand_width_bits=bundle.operand_width_bits,
     )
+    summary["compiled_program"] = payload.get("compiled_program", {})
     summary["requirement_profile"] = _build_requirement_profile(spec=spec, architecture=architecture)
     summary["workload_profile"] = _build_workload_profile(spec=spec, architecture=architecture)
 
@@ -218,6 +219,7 @@ def _build_case_report(
             }
         )
 
+    active_tile_count = _case_active_tile_count(case=case, tile_count=tile_count)
     case_summary = _summarize_trace(
         trace=trace,
         rows=rows,
@@ -225,13 +227,13 @@ def _build_case_report(
         depth=depth,
         operand_width_bits=operand_width_bits,
         architecture=architecture,
-        active_tile_count=sum(case.get("steps", [{}])[0].get("tile_enable_i", [1] * tile_count)),
+        active_tile_count=active_tile_count,
     )
 
     return {
         "name": case["name"],
         "tile_count": tile_count,
-        "active_tile_count": sum(case.get("steps", [{}])[0].get("tile_enable_i", [1] * tile_count)),
+        "active_tile_count": active_tile_count,
         "rows": rows,
         "cols": cols,
         "depth": depth,
@@ -280,6 +282,16 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
             else:
                 program[field] = int(value)
     return program
+
+
+def _case_active_tile_count(case: Dict[str, Any], tile_count: int) -> int:
+    first_step = case.get("steps", [{}])[0]
+    raw_mask = first_step.get("tile_enable_i", [1] * tile_count)
+    if isinstance(raw_mask, list):
+        effective_mask = raw_mask[:tile_count]
+    else:
+        effective_mask = [raw_mask]
+    return sum(int(value) for value in effective_mask) or 1
 
 
 def _event_tags(scheduler_snapshot: Dict[str, Any], valid_lane_count: int) -> List[str]:

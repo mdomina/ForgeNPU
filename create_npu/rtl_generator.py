@@ -26,6 +26,7 @@ def emit_seed_rtl(
         architecture.tile_rows,
         architecture.tile_cols,
     )
+    seed_tile_count = _seed_tile_count(architecture.tile_count)
 
     mac_unit_path = rtl_dir / "mac_unit.sv"
     mac_unit_path.write_text(
@@ -93,7 +94,7 @@ def emit_seed_rtl(
 
     cluster_control_path = rtl_dir / "cluster_control.sv"
     cluster_control_path.write_text(
-        _cluster_control_template(seed_tile_count=_seed_tile_count(architecture.tile_count)),
+        _cluster_control_template(seed_tile_count=seed_tile_count),
         encoding="utf-8",
     )
 
@@ -104,7 +105,7 @@ def emit_seed_rtl(
             acc_width=acc_width,
             seed_rows=seed_tile_rows,
             seed_cols=seed_tile_cols,
-            seed_tile_count=_seed_tile_count(architecture.tile_count),
+            seed_tile_count=seed_tile_count,
         ),
         encoding="utf-8",
     )
@@ -203,6 +204,16 @@ def emit_seed_rtl(
             "Il seed RTL propaga direttamente la tile architetturale "
             f"{seed_tile_rows}x{seed_tile_cols} nei default del cluster."
         )
+    if seed_tile_count != architecture.tile_count:
+        notes.append(
+            "Il seed RTL ha sanitizzato il tile count architetturale in "
+            f"{seed_tile_count} a partire da {architecture.tile_count}."
+        )
+    else:
+        notes.append(
+            "Il seed RTL propaga direttamente il tile count architetturale "
+            f"{seed_tile_count} nei default di `cluster_control` e `top_npu`."
+        )
 
     notes.append(
         "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control` e `top_npu`."
@@ -261,7 +272,7 @@ def _resolve_width(precision: str) -> Tuple[int, str]:
 
 
 def _seed_tile_count(tile_count: int) -> int:
-    return max(1, min(int(tile_count), 4))
+    return max(1, int(tile_count))
 
 
 def _seed_tile_shape(tile_rows: int, tile_cols: int) -> Tuple[int, int]:

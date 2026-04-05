@@ -117,6 +117,7 @@ class PipelineTest(unittest.TestCase):
             )
             expected_rows = int(result.architecture.tile_rows)
             expected_cols = int(result.architecture.tile_cols)
+            expected_tile_count = int(result.architecture.tile_count)
             top_npu_rtl = (
                 Path(result.output_dir)
                 / "candidates"
@@ -133,6 +134,7 @@ class PipelineTest(unittest.TestCase):
             ).read_text(encoding="utf-8")
             self.assertIn(f"parameter int ROWS = {expected_rows}", top_npu_rtl)
             self.assertIn(f"parameter int COLS = {expected_cols}", top_npu_rtl)
+            self.assertIn(f"parameter int TILE_COUNT = {expected_tile_count}", top_npu_rtl)
             self.assertIn(f"parameter int ROWS = {expected_rows}", systolic_tile_rtl)
             self.assertIn(f"parameter int COLS = {expected_cols}", systolic_tile_rtl)
             self.assertTrue(
@@ -206,6 +208,10 @@ class PipelineTest(unittest.TestCase):
                 / "cluster_control.sv"
             ).read_text(encoding="utf-8")
             self.assertIn("module cluster_control", cluster_control_rtl)
+            self.assertIn(
+                f"parameter int TILE_COUNT = {expected_tile_count}",
+                cluster_control_rtl,
+            )
             self.assertIn("cluster_control #(", top_npu_rtl)
             self.assertTrue(
                 (
@@ -288,6 +294,10 @@ class PipelineTest(unittest.TestCase):
                 " ".join(payload["generated"]["notes"]),
             )
             self.assertNotIn("ridotta", " ".join(payload["generated"]["notes"]))
+            self.assertIn(
+                f"tile count architetturale {expected_tile_count}",
+                " ".join(payload["generated"]["notes"]),
+            )
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())
@@ -697,7 +707,7 @@ class HarnessTest(unittest.TestCase):
                         "  parameter int ROWS = 32,",
                         "  parameter int COLS = 32,",
                         "  parameter int DEPTH = 4,",
-                        "  parameter int TILE_COUNT = 4",
+                        "  parameter int TILE_COUNT = 25",
                         ") ();",
                         "endmodule",
                         "",

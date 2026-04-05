@@ -64,7 +64,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Definire `top_npu` che assembli compute cluster, memoria e controllo.
 - [x] Aggiungere test end-to-end del top-level.
 - [x] Stimare throughput architetturale del sistema completo.
-- [ ] Propagare `TILE_COUNT` reale nel seed RTL senza l'attuale riduzione locale.
+- [x] Propagare `TILE_COUNT` reale nel seed RTL senza l'attuale riduzione locale.
+- [ ] Modellare un interconnect seed piu' dedicato per il traffico multi-tile e il broadcast del controllo.
 
 ## Requirement System
 
@@ -95,9 +96,9 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 Il prossimo milestone puo' essere considerato chiuso quando:
 
-- `TILE_COUNT` reale viene propagato in modo coerente al seed RTL del cluster e del top-level senza cap seed a `4`;
-- il top-level mantiene la separazione attuale tra control-path e data-path anche con piu' tile seed reali;
-- l'aggregazione dei risultati e il control broadcast restano consistenti quando il numero di tile cresce;
-- i report restano coerenti con la nuova tile size reale, senza perdere metriche di memoria, controllo e compute;
+- il seed RTL introduce un interconnect dedicato tra memoria, `cluster_control` e tile, invece del wiring broadcast piu' semplice attuale;
+- il top-level mantiene la separazione attuale tra control-path e data-path anche con l'interconnect multi-tile;
+- l'aggregazione dei risultati, il traffico `LOAD`/`STORE` e il control broadcast restano consistenti quando il numero di tile cresce;
+- i report restano coerenti con il nuovo data-path, senza perdere metriche di memoria, controllo e compute;
 - i test del cluster e del top-level continuano a passare anche dentro il container Docker;
 - il benchmark di regressione resta verde con `verilator`, `iverilog` e `yosys`.

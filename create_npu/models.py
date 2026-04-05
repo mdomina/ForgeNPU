@@ -8,12 +8,19 @@ class RequirementSpec:
     numeric_precision: str = "INT8"
     throughput_value: Optional[float] = None
     throughput_unit: Optional[str] = None
+    execution_mode: str = "inference"
+    optimization_priority: str = "balanced"
     power_budget_watts: Optional[float] = None
     latency_budget_ms: Optional[float] = None
     area_budget_mm2: Optional[float] = None
     available_memory_mb: Optional[float] = None
     memory_bandwidth_gb_per_s: Optional[float] = None
+    offchip_memory_type: str = "generic_dram"
     workload_type: str = "dense_gemm"
+    preferred_dataflow: str = "auto"
+    sparsity_support: str = "dense"
+    sequence_length: Optional[int] = None
+    kernel_size: Optional[int] = None
     batch_min: int = 1
     batch_max: int = 1
     interfaces: List[str] = field(default_factory=list)

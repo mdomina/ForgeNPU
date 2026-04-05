@@ -2,6 +2,7 @@ import math
 from typing import List
 
 from create_npu.models import ArchitectureCandidate, RequirementSpec
+from create_npu.workloads import get_workload_profile, resolve_family_for_spec
 
 
 DEFAULT_CANDIDATE_IDS = ["balanced", "throughput_max", "efficiency"]
@@ -15,6 +16,7 @@ def generate_candidate_architectures(
 
 
 def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> ArchitectureCandidate:
+    workload_profile = get_workload_profile(spec.workload_type)
     throughput_tops = _normalize_throughput_to_tops(spec)
     target_frequency_mhz = _resolve_frequency(spec=spec, candidate_id=candidate_id)
     target_frequency_hz = target_frequency_mhz * 1_000_000.0
@@ -65,6 +67,12 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
         "cluster_interconnect",
         "top_npu",
     ]
+    for module_hint in workload_profile.module_hints:
+        if module_hint not in modules:
+            modules.append(module_hint)
+    for module_hint in _structured_module_hints(spec=spec, family=family):
+        if module_hint not in modules:
+            modules.append(module_hint)
     if candidate_id == "throughput_max":
         modules.append("prefetch_buffer")
     if candidate_id == "efficiency":
@@ -85,9 +93,21 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
             f"Stimato throughput teorico di {estimated_tops:.2f} TOPS "
             f"a {target_frequency_mhz:.0f} MHz."
         ),
+        (
+            "Requirement strutturato: "
+            f"mode={spec.execution_mode}, priority={spec.optimization_priority}, "
+            f"offchip_memory={spec.offchip_memory_type}, dataflow={spec.preferred_dataflow}, "
+            f"sparsity={spec.sparsity_support}."
+        ),
+        f"Profilo workload `{spec.workload_type}`: {workload_profile.rationale}",
         f"Potenza stimata iniziale: {estimated_power_watts:.1f} W.",
         f"Area stimata iniziale: {estimated_area_mm2:.1f} mm2.",
     ]
+
+    if spec.sequence_length is not None:
+        rationale.append(f"Sequence length esplicita rilevata: {spec.sequence_length}.")
+    if spec.kernel_size is not None:
+        rationale.append(f"Kernel size esplicita rilevata: {spec.kernel_size}x{spec.kernel_size}.")
 
     if spec.batch_max > 1:
         rationale.append(
@@ -145,13 +165,10 @@ def _normalize_throughput_to_tops(spec: RequirementSpec) -> float:
 
 
 def _choose_family(spec: RequirementSpec) -> str:
-    if spec.workload_type == "transformer":
-        return "tiled_systolic_transformer"
-    if spec.workload_type == "convolution":
-        return "weight_stationary_array"
-    if spec.workload_type == "sparse_linear_algebra":
-        return "sparse_pe_mesh"
-    return "tiled_systolic_array"
+    return resolve_family_for_spec(
+        workload_type=spec.workload_type,
+        preferred_dataflow=spec.preferred_dataflow,
+    )
 
 
 def _choose_tile_edge(throughput_tops: float) -> int:
@@ -170,7 +187,7 @@ def _choose_memory_hierarchy(
     tile_count: int,
 ) -> tuple[int, int]:
     local_sram_kb_per_tile = _baseline_local_sram_kb(spec, candidate_id)
-    global_buffer_mb = _baseline_global_buffer_mb(tile_count, candidate_id)
+    global_buffer_mb = _baseline_global_buffer_mb(spec, tile_count, candidate_id)
 
     if spec.available_memory_mb is None:
         return local_sram_kb_per_tile, global_buffer_mb
@@ -200,25 +217,35 @@ def _choose_memory_hierarchy(
 
 
 def _baseline_local_sram_kb(spec: RequirementSpec, candidate_id: str) -> int:
+    workload_profile = get_workload_profile(spec.workload_type)
     base_kb = 256 if spec.numeric_precision.startswith("INT") else 512
-    if spec.workload_type == "transformer":
-        base_kb += 256
+    base_kb += workload_profile.local_sram_kb_delta
+    base_kb += _structured_local_sram_delta(spec)
     if spec.batch_max > 8:
         base_kb += 256
     if candidate_id == "throughput_max":
         base_kb += 128
     if candidate_id == "efficiency":
         base_kb += 64
-    return base_kb
+    return max(64, base_kb)
 
 
-def _baseline_global_buffer_mb(tile_count: int, candidate_id: str) -> int:
-    base_global_buffer_mb = max(4, math.ceil(tile_count / 4.0))
+def _baseline_global_buffer_mb(
+    spec: RequirementSpec,
+    tile_count: int,
+    candidate_id: str,
+) -> int:
+    workload_profile = get_workload_profile(spec.workload_type)
+    base_global_buffer_mb = (
+        max(4, math.ceil(tile_count / 4.0))
+        + workload_profile.global_buffer_mb_delta
+        + _structured_global_buffer_delta(spec)
+    )
     if candidate_id == "throughput_max":
         return base_global_buffer_mb + 2
     if candidate_id == "efficiency":
         return max(2, base_global_buffer_mb - 1)
-    return base_global_buffer_mb
+    return max(1, base_global_buffer_mb)
 
 
 def _choose_bus_width(
@@ -227,6 +254,7 @@ def _choose_bus_width(
     spec: RequirementSpec,
     target_frequency_mhz: float,
 ) -> int:
+    workload_profile = get_workload_profile(spec.workload_type)
     if throughput_tops >= 500.0:
         base_width = 2048
     elif throughput_tops >= 50.0:
@@ -235,6 +263,8 @@ def _choose_bus_width(
         base_width = 512
     else:
         base_width = 256
+    base_width = max(256, base_width + workload_profile.bus_width_bits_delta)
+    base_width = max(256, base_width + _structured_bus_width_delta(spec))
 
     required_width = 0
     if spec.memory_bandwidth_gb_per_s is not None:
@@ -258,6 +288,18 @@ def _choose_bus_width(
 
 def _resolve_frequency(spec: RequirementSpec, candidate_id: str) -> float:
     base_frequency = spec.target_frequency_mhz or 1000.0
+    if spec.optimization_priority == "latency":
+        base_frequency *= 1.08
+    elif spec.optimization_priority == "throughput":
+        base_frequency *= 1.05
+    elif spec.optimization_priority == "efficiency":
+        base_frequency *= 0.94
+    elif spec.optimization_priority == "area":
+        base_frequency *= 0.9
+
+    if spec.execution_mode == "training":
+        base_frequency *= 0.95
+
     if candidate_id == "throughput_max":
         return round(base_frequency * 1.15, 2)
     if candidate_id == "efficiency":
@@ -301,3 +343,78 @@ def _round_up(value: int, multiple: int) -> int:
 
 def _estimate_bus_bandwidth_gb_per_s(bus_width_bits: int, target_frequency_mhz: float) -> float:
     return (bus_width_bits * target_frequency_mhz) / 8000.0
+
+
+def _structured_local_sram_delta(spec: RequirementSpec) -> int:
+    delta = 0
+    if spec.execution_mode == "training":
+        delta += 256
+    if spec.optimization_priority == "latency":
+        delta += 64
+    elif spec.optimization_priority == "area":
+        delta -= 64
+    if spec.sequence_length is not None and spec.sequence_length >= 2048:
+        delta += 128
+    if spec.kernel_size is not None and spec.kernel_size >= 3:
+        delta += 64
+    if spec.sparsity_support == "structured":
+        delta += 64
+    elif spec.sparsity_support == "unstructured":
+        delta += 128
+    return delta
+
+
+def _structured_global_buffer_delta(spec: RequirementSpec) -> int:
+    delta = 0
+    if spec.execution_mode == "training":
+        delta += 4
+    if spec.offchip_memory_type == "HBM":
+        delta += 2
+    elif spec.offchip_memory_type == "LPDDR":
+        delta -= 1
+    if spec.optimization_priority == "latency":
+        delta += 1
+    elif spec.optimization_priority == "area":
+        delta -= 1
+    if spec.sequence_length is not None:
+        if spec.sequence_length >= 4096:
+            delta += 2
+        elif spec.sequence_length >= 2048:
+            delta += 1
+    if spec.kernel_size is not None and spec.kernel_size >= 5:
+        delta += 1
+    return delta
+
+
+def _structured_bus_width_delta(spec: RequirementSpec) -> int:
+    delta = 0
+    if spec.offchip_memory_type == "HBM":
+        delta += 512
+    elif spec.offchip_memory_type == "GDDR":
+        delta += 256
+    elif spec.offchip_memory_type in ("LPDDR", "host_memory"):
+        delta -= 256
+
+    if spec.optimization_priority in ("throughput", "latency"):
+        delta += 256
+    elif spec.optimization_priority in ("efficiency", "area"):
+        delta -= 256
+
+    if spec.execution_mode == "training":
+        delta += 256
+    if spec.sequence_length is not None and spec.sequence_length >= 4096:
+        delta += 256
+    return delta
+
+
+def _structured_module_hints(spec: RequirementSpec, family: str) -> List[str]:
+    module_hints: List[str] = []
+    if spec.execution_mode == "training":
+        module_hints.append("gradient_accumulator")
+    if spec.sparsity_support != "dense":
+        module_hints.append("sparsity_decoder")
+    if family == "output_stationary_array":
+        module_hints.append("output_accumulator_buffer")
+    if spec.offchip_memory_type == "HBM":
+        module_hints.append("hbm_adapter")
+    return module_hints

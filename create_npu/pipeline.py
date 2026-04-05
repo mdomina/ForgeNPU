@@ -61,6 +61,7 @@ class CreateNPUPipeline:
                 bundle=generated,
                 output_dir=candidate_dir,
                 architecture=architecture,
+                spec=spec,
             )
             generated.supporting_files.append(str(report["path"]))
             tool_results = VerificationHarness(candidate_dir).run(generated)

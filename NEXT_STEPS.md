@@ -71,8 +71,8 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 ## Requirement System
 
 - [x] Estendere il parser con memoria disponibile, area target, latenza e bandwidth.
-- [ ] Supportare piu' workload oltre `dense_gemm` e `transformer`.
-- [ ] Ridurre le assunzioni implicite aumentando i campi strutturati del requirement.
+- [x] Supportare piu' workload oltre `dense_gemm` e `transformer`.
+- [x] Ridurre le assunzioni implicite aumentando i campi strutturati del requirement.
 
 ## LLM Integration
 

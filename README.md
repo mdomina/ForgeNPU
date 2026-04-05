@@ -9,6 +9,8 @@ Bootstrap eseguibile del progetto descritto in `progetto_npu_ai.md`: prende un r
 Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 
 - parsing euristico del requisito con memoria disponibile, bandwidth, area, latenza e frequenza target;
+- riconoscimento workload anche per `convolution` e `sparse_linear_algebra`, con alias pratici (`cnn`, `conv2d`, `spmm`, `sparse matmul`) oltre `dense_gemm` e `transformer`;
+- specifica strutturata piu' ricca con `execution_mode`, `optimization_priority`, `offchip_memory_type`, `preferred_dataflow`, `sparsity_support`, `sequence_length` e `kernel_size`;
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
 - generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control` e `top_npu`;
@@ -27,11 +29,12 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
 - report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
+- report di esecuzione con profilo workload esplicito, requirement profile strutturato, famiglia architetturale preferita/selezionata e assunzioni persistite del parser;
 - harness locale per lint, simulazione e sintesi con fallback esplicito, inclusa sintesi `yosys` bounded sui parametri dei casi `top_npu` per mantenere trattabile la regressione;
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `cluster_interconnect`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il cluster separa ora in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Il prossimo passo utile e' allargare il requirement system a workload oltre `dense_gemm` e `transformer`, riducendo le assunzioni implicite del parser.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `cluster_interconnect`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il cluster separa ora in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Il prossimo passo utile e' attivare davvero il backend LLM live oltre il fallback euristico, riusando la specifica strutturata appena estesa.
 
 ## Quick Start
 
@@ -154,8 +157,6 @@ Comportamento:
 
 ## Prossimi passi consigliati
 
-1. Supportare workload oltre `dense_gemm` e `transformer` nel requirement parser e nello scoring.
-2. Ridurre le assunzioni implicite del requirement system aumentando i campi strutturati.
-3. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
-4. Salvare e confrontare meglio i dataset di run per il learning loop.
-5. Aggiungere best-of-N automatico e confronto sistematico tra candidati.
+1. Integrare chiamate LLM live per la sintesi di candidate RTL oltre il seed statico.
+2. Salvare e confrontare meglio i dataset di run per il learning loop.
+3. Aggiungere best-of-N automatico e confronto sistematico tra candidati.

@@ -17,6 +17,7 @@ from create_npu.models import (
 )
 from create_npu.pipeline import CreateNPUPipeline
 from create_npu.requirement_parser import RequirementParser
+from create_npu.scorer import score_design
 
 
 class RequirementParserTest(unittest.TestCase):
@@ -45,6 +46,40 @@ class RequirementParserTest(unittest.TestCase):
         self.assertEqual(spec.memory_bandwidth_gb_per_s, 500.0)
         self.assertEqual(spec.target_frequency_mhz, 1000.0)
 
+    def test_parse_additional_workloads(self) -> None:
+        parser = RequirementParser()
+        convolution_spec = parser.parse(
+            "Serve una NPU INT8 da 8 TOPS per CNN conv2d con 900 MHz."
+        )
+        sparse_spec = parser.parse(
+            "Serve una NPU INT8 da 1 TOPS per sparse matmul SpMM con batch 4."
+        )
+
+        self.assertEqual(convolution_spec.workload_type, "convolution")
+        self.assertEqual(sparse_spec.workload_type, "sparse_linear_algebra")
+        self.assertNotIn(
+            "Workload non esplicitato: assumo dense_gemm come default iniziale.",
+            convolution_spec.assumptions,
+        )
+        self.assertNotIn(
+            "Workload non esplicitato: assumo dense_gemm come default iniziale.",
+            sparse_spec.assumptions,
+        )
+
+    def test_parse_structured_requirement_fields(self) -> None:
+        parser = RequirementParser()
+        spec = parser.parse(
+            "Voglio una NPU INT8 da 20 TOPS per transformer inference a bassa latenza "
+            "con HBM, systolic dataflow, sparsity 2:4 e sequence length 4096."
+        )
+
+        self.assertEqual(spec.execution_mode, "inference")
+        self.assertEqual(spec.optimization_priority, "latency")
+        self.assertEqual(spec.offchip_memory_type, "HBM")
+        self.assertEqual(spec.preferred_dataflow, "systolic")
+        self.assertEqual(spec.sparsity_support, "structured")
+        self.assertEqual(spec.sequence_length, 4096)
+
 
 class ArchitecturePlanningTest(unittest.TestCase):
     def test_plan_architecture_respects_memory_and_bandwidth_hints(self) -> None:
@@ -72,6 +107,195 @@ class ArchitecturePlanningTest(unittest.TestCase):
 
         self.assertLessEqual(total_local_memory_mb, 4.0)
         self.assertGreaterEqual(sustained_bandwidth_gb_per_s, 500.0)
+
+    def test_plan_architecture_specializes_additional_workloads(self) -> None:
+        dense_architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 8 TOPS dense GEMM.",
+                numeric_precision="INT8",
+                throughput_value=8.0,
+                throughput_unit="TOPS",
+                workload_type="dense_gemm",
+                target_frequency_mhz=900.0,
+            )
+        )
+        convolution_architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 8 TOPS per CNN.",
+                numeric_precision="INT8",
+                throughput_value=8.0,
+                throughput_unit="TOPS",
+                workload_type="convolution",
+                target_frequency_mhz=900.0,
+            )
+        )
+        sparse_architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 8 TOPS sparse.",
+                numeric_precision="INT8",
+                throughput_value=8.0,
+                throughput_unit="TOPS",
+                workload_type="sparse_linear_algebra",
+                target_frequency_mhz=900.0,
+            )
+        )
+
+        self.assertEqual(convolution_architecture.family, "weight_stationary_array")
+        self.assertEqual(sparse_architecture.family, "sparse_pe_mesh")
+        self.assertIn("line_buffer", convolution_architecture.modules)
+        self.assertIn("sparsity_decoder", sparse_architecture.modules)
+        self.assertGreater(
+            convolution_architecture.local_sram_kb_per_tile,
+            dense_architecture.local_sram_kb_per_tile,
+        )
+
+    def test_plan_architecture_uses_structured_requirement_fields(self) -> None:
+        baseline_architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 20 TOPS transformer.",
+                numeric_precision="INT8",
+                throughput_value=20.0,
+                throughput_unit="TOPS",
+                workload_type="transformer",
+                target_frequency_mhz=1000.0,
+            )
+        )
+        structured_architecture = plan_architecture(
+            RequirementSpec(
+                original_text="NPU INT8 20 TOPS transformer training low latency with HBM.",
+                numeric_precision="INT8",
+                throughput_value=20.0,
+                throughput_unit="TOPS",
+                workload_type="transformer",
+                execution_mode="training",
+                optimization_priority="latency",
+                offchip_memory_type="HBM",
+                preferred_dataflow="systolic",
+                sparsity_support="structured",
+                sequence_length=4096,
+                target_frequency_mhz=1000.0,
+            )
+        )
+
+        self.assertEqual(structured_architecture.family, "tiled_systolic_transformer")
+        self.assertGreater(
+            structured_architecture.local_sram_kb_per_tile,
+            baseline_architecture.local_sram_kb_per_tile,
+        )
+        self.assertGreater(
+            structured_architecture.global_buffer_mb,
+            baseline_architecture.global_buffer_mb,
+        )
+        self.assertGreater(
+            structured_architecture.bus_width_bits,
+            baseline_architecture.bus_width_bits,
+        )
+        self.assertGreater(
+            structured_architecture.target_frequency_mhz,
+            baseline_architecture.target_frequency_mhz,
+        )
+
+
+class ScoringTest(unittest.TestCase):
+    def test_score_design_rewards_matching_workload_family(self) -> None:
+        convolution_spec = RequirementSpec(
+            original_text="NPU INT8 8 TOPS per CNN.",
+            numeric_precision="INT8",
+            throughput_value=8.0,
+            throughput_unit="TOPS",
+            workload_type="convolution",
+            target_frequency_mhz=900.0,
+        )
+        matching_architecture = ArchitectureCandidate(
+            candidate_id="matching",
+            family="weight_stationary_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=4,
+            pe_rows=32,
+            pe_cols=32,
+            pe_count=1024,
+            local_sram_kb_per_tile=384,
+            global_buffer_mb=5,
+            bus_width_bits=768,
+            target_frequency_mhz=900.0,
+            estimated_tops=8.0,
+            estimated_power_watts=40.0,
+            estimated_area_mm2=5.0,
+        )
+        mismatched_architecture = ArchitectureCandidate(
+            candidate_id="mismatched",
+            family="tiled_systolic_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=4,
+            pe_rows=32,
+            pe_cols=32,
+            pe_count=1024,
+            local_sram_kb_per_tile=384,
+            global_buffer_mb=5,
+            bus_width_bits=768,
+            target_frequency_mhz=900.0,
+            estimated_tops=8.0,
+            estimated_power_watts=40.0,
+            estimated_area_mm2=5.0,
+        )
+
+        self.assertGreater(
+            score_design(convolution_spec, matching_architecture, []),
+            score_design(convolution_spec, mismatched_architecture, []),
+        )
+
+    def test_score_design_rewards_structured_preference_alignment(self) -> None:
+        throughput_spec = RequirementSpec(
+            original_text="NPU INT8 32 TOPS throughput-oriented con HBM.",
+            numeric_precision="INT8",
+            throughput_value=32.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            optimization_priority="throughput",
+            offchip_memory_type="HBM",
+            target_frequency_mhz=1000.0,
+        )
+        throughput_architecture = ArchitectureCandidate(
+            candidate_id="throughput_max",
+            family="tiled_systolic_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=8,
+            pe_rows=64,
+            pe_cols=64,
+            pe_count=4096,
+            local_sram_kb_per_tile=512,
+            global_buffer_mb=8,
+            bus_width_bits=1536,
+            target_frequency_mhz=1150.0,
+            estimated_tops=32.0,
+            estimated_power_watts=60.0,
+            estimated_area_mm2=8.0,
+        )
+        balanced_architecture = ArchitectureCandidate(
+            candidate_id="balanced",
+            family="tiled_systolic_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=8,
+            pe_rows=64,
+            pe_cols=64,
+            pe_count=4096,
+            local_sram_kb_per_tile=512,
+            global_buffer_mb=8,
+            bus_width_bits=1024,
+            target_frequency_mhz=1000.0,
+            estimated_tops=32.0,
+            estimated_power_watts=60.0,
+            estimated_area_mm2=8.0,
+        )
+
+        self.assertGreater(
+            score_design(throughput_spec, throughput_architecture, []),
+            score_design(throughput_spec, balanced_architecture, []),
+        )
 
 
 class PipelineTest(unittest.TestCase):
@@ -330,6 +554,16 @@ class PipelineTest(unittest.TestCase):
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())
             self.assertEqual(report["summary"]["top_level_case_count"], 4)
+            self.assertEqual(report["summary"]["requirement_profile"]["execution_mode"], "inference")
+            self.assertEqual(
+                report["summary"]["requirement_profile"]["optimization_priority"],
+                "balanced",
+            )
+            self.assertEqual(report["summary"]["workload_profile"]["workload_type"], "transformer")
+            self.assertEqual(
+                report["summary"]["workload_profile"]["selected_architecture_family"],
+                "tiled_systolic_transformer",
+            )
             self.assertEqual(
                 report["summary"]["scheduler_state_sequence"],
                 [
@@ -445,15 +679,15 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["theoretical_bus_bandwidth_gb_per_s"],
-                128.0,
+                160.0,
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["bus_bandwidth_utilization"],
-                0.016319,
+                0.013056,
             )
             self.assertEqual(
                 report["summary"]["memory_path"]["peak_bus_bandwidth_utilization"],
-                0.125,
+                0.1,
             )
             self.assertEqual(report["summary"]["compute_path"]["compute_cycles"], 5)
             self.assertEqual(report["summary"]["compute_path"]["flush_cycles"], 4)
@@ -636,6 +870,49 @@ class PipelineTest(unittest.TestCase):
             self.assertIn(
                 "execution_report.json",
                 " ".join(balanced_candidate["generated"]["supporting_files"]),
+            )
+
+    def test_pipeline_handles_convolution_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 8 TOPS per CNN conv2d kernel 3x3 "
+                "a bassa latenza con HBM e weight-stationary dataflow, batch 1-2.",
+                num_candidates=1,
+            )
+
+            self.assertEqual(result.spec.workload_type, "convolution")
+            self.assertEqual(result.architecture.family, "weight_stationary_array")
+            report_payload = json.loads(
+                Path(result.report["path"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                report_payload["summary"]["workload_profile"]["workload_type"],
+                "convolution",
+            )
+            self.assertEqual(
+                report_payload["summary"]["workload_profile"]["preferred_architecture_family"],
+                "weight_stationary_array",
+            )
+            self.assertEqual(
+                report_payload["summary"]["requirement_profile"]["optimization_priority"],
+                "latency",
+            )
+            self.assertEqual(
+                report_payload["summary"]["requirement_profile"]["offchip_memory_type"],
+                "HBM",
+            )
+            self.assertEqual(
+                report_payload["summary"]["requirement_profile"]["preferred_dataflow"],
+                "weight_stationary",
+            )
+            self.assertEqual(
+                report_payload["summary"]["requirement_profile"]["resolved_dataflow"],
+                "weight_stationary",
+            )
+            self.assertEqual(
+                report_payload["summary"]["requirement_profile"]["kernel_size"],
+                3,
             )
 
     def test_llm_backend_falls_back_cleanly(self) -> None:

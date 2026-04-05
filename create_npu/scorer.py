@@ -1,6 +1,7 @@
 from typing import List
 
 from create_npu.models import ArchitectureCandidate, RequirementSpec, ToolResult
+from create_npu.workloads import compatible_families_for_spec, resolve_family_for_spec
 
 
 def score_design(
@@ -12,11 +13,8 @@ def score_design(
     fit_error_ratio = abs(architecture.estimated_tops - target_tops) / target_tops
     score += max(0.0, 25.0 - (fit_error_ratio * 40.0))
 
-    if architecture.family.startswith("tiled_systolic") and spec.workload_type in (
-        "transformer",
-        "dense_gemm",
-    ):
-        score += 10.0
+    score += _workload_family_bonus(spec=spec, architecture=architecture)
+    score += _structured_requirement_bonus(spec=spec, architecture=architecture)
 
     score += 5.0 if architecture.bus_width_bits >= 512 else 0.0
     score += 5.0 if architecture.local_sram_kb_per_tile >= 512 else 0.0
@@ -85,3 +83,44 @@ def _estimate_total_local_memory_mb(architecture: ArchitectureCandidate) -> floa
 
 def _estimate_bus_bandwidth_gb_per_s(architecture: ArchitectureCandidate) -> float:
     return (architecture.bus_width_bits * architecture.target_frequency_mhz) / 8000.0
+
+
+def _workload_family_bonus(spec: RequirementSpec, architecture: ArchitectureCandidate) -> float:
+    compatible_families = compatible_families_for_spec(
+        workload_type=spec.workload_type,
+        preferred_dataflow=spec.preferred_dataflow,
+    )
+    expected_family = resolve_family_for_spec(
+        workload_type=spec.workload_type,
+        preferred_dataflow=spec.preferred_dataflow,
+    )
+    if architecture.family in compatible_families:
+        if architecture.family == expected_family:
+            return 12.0
+        return 10.0
+    return 0.0
+
+
+def _structured_requirement_bonus(spec: RequirementSpec, architecture: ArchitectureCandidate) -> float:
+    bonus = 0.0
+
+    if spec.optimization_priority == "throughput" and architecture.candidate_id == "throughput_max":
+        bonus += 6.0
+    elif spec.optimization_priority == "latency" and architecture.target_frequency_mhz >= 1000.0:
+        bonus += 4.0
+    elif spec.optimization_priority in ("efficiency", "area") and architecture.candidate_id == "efficiency":
+        bonus += 6.0
+    elif spec.optimization_priority == "balanced" and architecture.candidate_id == "balanced":
+        bonus += 4.0
+
+    if spec.offchip_memory_type == "HBM" and architecture.bus_width_bits >= 1024:
+        bonus += 4.0
+    elif spec.offchip_memory_type == "LPDDR" and architecture.bus_width_bits <= 512:
+        bonus += 2.0
+
+    if spec.execution_mode == "training" and architecture.local_sram_kb_per_tile >= 768:
+        bonus += 3.0
+    if spec.sparsity_support != "dense" and architecture.family == "sparse_pe_mesh":
+        bonus += 4.0
+
+    return bonus

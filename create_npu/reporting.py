@@ -10,16 +10,23 @@ from create_npu.golden_model import (
     top_npu_context_reference,
     top_npu_reference,
 )
-from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle
+from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle, RequirementSpec
+from create_npu.workloads import (
+    get_workload_profile,
+    resolve_dataflow_for_family,
+    resolve_dataflow_for_spec,
+    resolve_family_for_spec,
+)
 
 
 def generate_execution_report(
     bundle: GeneratedDesignBundle,
     output_dir: Path,
     architecture: Optional[ArchitectureCandidate] = None,
+    spec: Optional[RequirementSpec] = None,
 ) -> Dict[str, Any]:
     report_path = output_dir / "execution_report.json"
-    report_payload = _build_execution_report(bundle=bundle, architecture=architecture)
+    report_payload = _build_execution_report(bundle=bundle, architecture=architecture, spec=spec)
     report_path.write_text(
         json.dumps(report_payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -34,6 +41,7 @@ def generate_execution_report(
 def _build_execution_report(
     bundle: GeneratedDesignBundle,
     architecture: Optional[ArchitectureCandidate] = None,
+    spec: Optional[RequirementSpec] = None,
 ) -> Dict[str, Any]:
     if not bundle.reference_cases_path:
         return {
@@ -74,6 +82,8 @@ def _build_execution_report(
         architecture=architecture,
         operand_width_bits=bundle.operand_width_bits,
     )
+    summary["requirement_profile"] = _build_requirement_profile(spec=spec, architecture=architecture)
+    summary["workload_profile"] = _build_workload_profile(spec=spec, architecture=architecture)
 
     return {
         "available": bool(case_reports),
@@ -372,6 +382,8 @@ def _empty_summary() -> Dict[str, Any]:
             "peak_abs_psum": 0,
             "estimated_mac_operations": 0,
         },
+        "requirement_profile": None,
+        "workload_profile": None,
     }
 
 
@@ -648,6 +660,56 @@ def _summarize_case_reports(
         seed_peak_macs_per_cycle=int(summary["compute_path"]["peak_valid_lanes"]),
     )
     return summary
+
+
+def _build_workload_profile(
+    spec: Optional[RequirementSpec],
+    architecture: Optional[ArchitectureCandidate],
+) -> Optional[Dict[str, Any]]:
+    if spec is None:
+        return None
+
+    workload_profile = get_workload_profile(spec.workload_type)
+    return {
+        "workload_type": spec.workload_type,
+        "preferred_architecture_family": resolve_family_for_spec(
+            workload_type=spec.workload_type,
+            preferred_dataflow=spec.preferred_dataflow,
+        ),
+        "selected_architecture_family": architecture.family if architecture else workload_profile.family,
+        "summary": workload_profile.report_summary,
+        "assumptions": list(spec.assumptions),
+    }
+
+
+def _build_requirement_profile(
+    spec: Optional[RequirementSpec],
+    architecture: Optional[ArchitectureCandidate],
+) -> Optional[Dict[str, Any]]:
+    if spec is None:
+        return None
+
+    selected_family = architecture.family if architecture else resolve_family_for_spec(
+        workload_type=spec.workload_type,
+        preferred_dataflow=spec.preferred_dataflow,
+    )
+    return {
+        "execution_mode": spec.execution_mode,
+        "optimization_priority": spec.optimization_priority,
+        "offchip_memory_type": spec.offchip_memory_type,
+        "preferred_dataflow": spec.preferred_dataflow,
+        "resolved_dataflow": resolve_dataflow_for_spec(
+            workload_type=spec.workload_type,
+            preferred_dataflow=spec.preferred_dataflow,
+        ),
+        "selected_architecture_dataflow": resolve_dataflow_for_family(selected_family),
+        "sparsity_support": spec.sparsity_support,
+        "sequence_length": spec.sequence_length,
+        "kernel_size": spec.kernel_size,
+        "interfaces": list(spec.interfaces),
+        "assumptions": list(spec.assumptions),
+        "ambiguities": list(spec.ambiguities),
+    }
 
 
 def _summarize_trace(

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from create_npu.golden_model import (
     cluster_control_reference,
+    cluster_interconnect_reference,
     scheduler_reference,
     scheduler_state_name,
     top_npu_reference,
@@ -107,10 +108,40 @@ def _build_case_report(
         depth=depth,
         tile_count=tile_count,
     )
+    interconnect_snapshots = cluster_interconnect_reference(
+        steps=[
+            {
+                "dma_payload_i": scheduler_snapshot["dma_payload_o"],
+                "tile_dma_valid_i": control_snapshot["tile_dma_valid_o"],
+                "dma_write_weights_i": control_snapshot["dma_write_weights_o"],
+                "dma_bank_select_i": control_snapshot["dma_bank_select_o"],
+                "dma_local_addr_i": control_snapshot["dma_local_addr_o"],
+                "tile_load_vector_en_i": control_snapshot["tile_load_vector_en_o"],
+                "activation_read_bank_select_i": control_snapshot["activation_read_bank_select_o"],
+                "activation_local_read_addr_i": control_snapshot["activation_local_read_addr_o"],
+                "weight_read_bank_select_i": control_snapshot["weight_read_bank_select_o"],
+                "weight_local_read_addr_i": control_snapshot["weight_local_read_addr_o"],
+                "tile_compute_en_i": control_snapshot["tile_compute_en_o"],
+                "tile_flush_pipeline_i": control_snapshot["tile_flush_pipeline_o"],
+                "tile_clear_acc_i": control_snapshot["tile_clear_acc_o"],
+                "tile_store_results_en_i": control_snapshot["tile_store_results_en_o"],
+                "store_results_en_i": control_snapshot["store_results_en_o"],
+                "result_write_addr_i": control_snapshot["result_write_addr_o"],
+                "store_burst_index_i": control_snapshot["store_burst_index_o"],
+                "tile_psums_i": top_snapshot["psums_o"],
+            }
+            for scheduler_snapshot, control_snapshot, top_snapshot in zip(
+                scheduler_snapshots, control_snapshots, top_snapshots
+            )
+        ],
+        rows=rows,
+        cols=cols,
+        tile_count=tile_count,
+    )
 
     trace = []
-    for cycle, (scheduler_snapshot, control_snapshot, top_snapshot) in enumerate(
-        zip(scheduler_snapshots, control_snapshots, top_snapshots)
+    for cycle, (scheduler_snapshot, control_snapshot, interconnect_snapshot, top_snapshot) in enumerate(
+        zip(scheduler_snapshots, control_snapshots, interconnect_snapshots, top_snapshots)
     ):
         state_id = int(scheduler_snapshot["state_o"])
         valids = [int(value) for value in top_snapshot["valids_o"]]
@@ -147,6 +178,32 @@ def _build_case_report(
                         int(value) for value in control_snapshot["tile_store_results_en_o"]
                     ],
                     "store_burst_index": int(control_snapshot["store_burst_index_o"]),
+                },
+                "interconnect_path": {
+                    "tile_dma_valid": [
+                        int(value) for value in interconnect_snapshot["tile_dma_valid_o"]
+                    ],
+                    "dma_payload": [int(value) for value in interconnect_snapshot["dma_payload_o"]],
+                    "tile_load_vector_en": [
+                        int(value) for value in interconnect_snapshot["tile_load_vector_en_o"]
+                    ],
+                    "tile_compute_en": [
+                        int(value) for value in interconnect_snapshot["tile_compute_en_o"]
+                    ],
+                    "tile_flush_pipeline": [
+                        int(value) for value in interconnect_snapshot["tile_flush_pipeline_o"]
+                    ],
+                    "tile_clear_acc": [
+                        int(value) for value in interconnect_snapshot["tile_clear_acc_o"]
+                    ],
+                    "tile_store_results_en": [
+                        int(value) for value in interconnect_snapshot["tile_store_results_en_o"]
+                    ],
+                    "result_write_valid": int(interconnect_snapshot["result_write_valid_o"]),
+                    "result_write_addr": int(interconnect_snapshot["result_write_addr_o"]),
+                    "result_write_valid_mask": [
+                        int(value) for value in interconnect_snapshot["result_write_valid_mask_o"]
+                    ],
                 },
                 "memory_path": {
                     "dma_valid": int(scheduler_snapshot["dma_valid_o"]),
@@ -288,6 +345,13 @@ def _empty_summary() -> Dict[str, Any]:
             "average_active_tiles_per_active_cycle": 0.0,
             "average_active_tiles_per_compute_cycle": 0.0,
         },
+        "interconnect_path": {
+            "dma_fanout_cycles": 0,
+            "load_fanout_cycles": 0,
+            "compute_fanout_cycles": 0,
+            "store_lane_write_cycles": 0,
+            "peak_store_lanes_per_cycle": 0,
+        },
         "memory_path": {
             "dma_cycles": 0,
             "dma_activation_cycles": 0,
@@ -368,6 +432,7 @@ def _summarize_case_reports(
 
             memory_path = step["memory_path"]
             control_path = step.get("control_path", {})
+            interconnect_path = step.get("interconnect_path", {})
             compute_path = step["compute_path"]
 
             dma_active_tiles = sum(int(value) for value in control_path.get("tile_dma_valid", []))
@@ -415,6 +480,30 @@ def _summarize_case_reports(
             summary["control_path"]["peak_active_tiles"] = max(
                 summary["control_path"]["peak_active_tiles"],
                 active_tiles_this_cycle,
+            )
+
+            interconnect_dma_active_tiles = sum(
+                int(value) for value in interconnect_path.get("tile_dma_valid", [])
+            )
+            interconnect_load_active_tiles = sum(
+                int(value) for value in interconnect_path.get("tile_load_vector_en", [])
+            )
+            interconnect_compute_active_tiles = sum(
+                int(value) for value in interconnect_path.get("tile_compute_en", [])
+            )
+            interconnect_store_lanes = sum(
+                int(value) for value in interconnect_path.get("result_write_valid_mask", [])
+            )
+            if interconnect_dma_active_tiles > 0:
+                summary["interconnect_path"]["dma_fanout_cycles"] += 1
+            if interconnect_load_active_tiles > 0:
+                summary["interconnect_path"]["load_fanout_cycles"] += 1
+            if interconnect_compute_active_tiles > 0:
+                summary["interconnect_path"]["compute_fanout_cycles"] += 1
+            summary["interconnect_path"]["store_lane_write_cycles"] += interconnect_store_lanes
+            summary["interconnect_path"]["peak_store_lanes_per_cycle"] = max(
+                summary["interconnect_path"]["peak_store_lanes_per_cycle"],
+                interconnect_store_lanes,
             )
 
             if memory_path["dma_valid"]:

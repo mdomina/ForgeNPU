@@ -21,8 +21,9 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - primitive seed di `LOAD/STORE` con base address, stride e burst count, propagate nel `scheduler` e nel `top_npu`;
 - stato esplicito `FLUSH` nel `scheduler`, propagato fino al `tile_compute_unit` e al `systolic_tile` per separare il drain/reset della pipeline dall'azzeramento degli accumulatori;
 - `cluster_control` seed dedicato al routing del control-path tra `scheduler` e tile, con decode di bank/local address e broadcast per-tile delle primitive di DMA/load/compute/store/flush/clear;
+- `cluster_interconnect` seed dedicato al fanout del data/control routing multi-tile e all'aggregazione dei burst `STORE` del cluster;
 - writeback `STORE` top-level segmentato per burst, con payload risultati e `valid_mask` osservabili a livello top-level;
-- `top_npu` parametrico su `TILE_COUNT` con wiring multi-tile seed e broadcast control-path verso piu' `tile_compute_unit`;
+- `top_npu` parametrico su `TILE_COUNT` che orchestra `scheduler`, `cluster_control`, `cluster_interconnect` e piu' `tile_compute_unit` senza incorporare direttamente il fanout del cluster;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
 - report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica e stima del throughput effettivo del `top_npu`;
@@ -30,7 +31,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - backend LLM opzionale con prompt/artifact preparatori e fallback controllato;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il control-path del cluster e' ora separato in modo esplicito dal data-path del top-level, con banking, descrittori minimi, burst di writeback e flush della pipeline instradati dal modulo dedicato; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Il prossimo passo utile e' introdurre un interconnect seed piu' dedicato per il traffico multi-tile.
+Il generatore RTL resta ancora seed-based: oggi produce un `top_npu` verificabile con `scheduler`, `cluster_control`, `cluster_interconnect`, `dma_engine`, `scratchpad_controller` e `tile_compute_unit`, gia' predisposto a instanziare piu' tile identici. Il cluster separa ora in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback e flush della pipeline instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Il prossimo passo utile e' rendere l'interconnect piu' realistico con handshake e backpressure multi-tile.
 
 ## Quick Start
 

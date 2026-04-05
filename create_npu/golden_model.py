@@ -412,6 +412,60 @@ def cluster_control_reference(
     ]
 
 
+def cluster_interconnect_reference(
+    steps: List[Dict[str, object]],
+    rows: int = 2,
+    cols: int = 2,
+    tile_count: int = 1,
+) -> List[Dict[str, object]]:
+    sanitized_tile_count = _sanitize_tile_count(tile_count)
+    snapshots: List[Dict[str, object]] = []
+    for step in steps:
+        control_snapshot = {
+            "tile_dma_valid_o": _sanitize_tile_enable_mask(
+                step.get("tile_dma_valid_i"), sanitized_tile_count
+            ),
+            "dma_write_weights_o": int(step.get("dma_write_weights_i", 0)),
+            "dma_bank_select_o": int(bool(step.get("dma_bank_select_i", 0))),
+            "dma_local_addr_o": int(step.get("dma_local_addr_i", 0)),
+            "tile_load_vector_en_o": _sanitize_tile_enable_mask(
+                step.get("tile_load_vector_en_i"), sanitized_tile_count
+            ),
+            "activation_read_bank_select_o": int(
+                bool(step.get("activation_read_bank_select_i", 0))
+            ),
+            "activation_local_read_addr_o": int(step.get("activation_local_read_addr_i", 0)),
+            "weight_read_bank_select_o": int(bool(step.get("weight_read_bank_select_i", 0))),
+            "weight_local_read_addr_o": int(step.get("weight_local_read_addr_i", 0)),
+            "tile_compute_en_o": _sanitize_tile_enable_mask(
+                step.get("tile_compute_en_i"), sanitized_tile_count
+            ),
+            "tile_flush_pipeline_o": _sanitize_tile_enable_mask(
+                step.get("tile_flush_pipeline_i"), sanitized_tile_count
+            ),
+            "tile_clear_acc_o": _sanitize_tile_enable_mask(
+                step.get("tile_clear_acc_i"), sanitized_tile_count
+            ),
+            "tile_store_results_en_o": _sanitize_tile_enable_mask(
+                step.get("tile_store_results_en_i"), sanitized_tile_count
+            ),
+            "store_results_en_o": int(step.get("store_results_en_i", 0)),
+            "result_write_addr_o": int(step.get("result_write_addr_i", 0)),
+            "store_burst_index_o": int(step.get("store_burst_index_i", 0)),
+        }
+        snapshots.append(
+            _cluster_interconnect_outputs(
+                control_snapshot=control_snapshot,
+                dma_payload=[int(value) for value in step.get("dma_payload_i", [])],
+                psums=[int(value) for value in step.get("tile_psums_i", [])],
+                rows=rows,
+                cols=cols,
+                tile_count=sanitized_tile_count,
+            )
+        )
+    return snapshots
+
+
 def top_npu_reference(
     steps: List[Dict[str, object]],
     rows: int = 2,
@@ -424,6 +478,13 @@ def top_npu_reference(
     tile_enable_masks = [
         _sanitize_tile_enable_mask(step.get("tile_enable_i"), sanitized_tile_count)
         for step in steps
+    ]
+    control_snapshots = [
+        _cluster_control_outputs(
+            scheduler_snapshot=scheduler_snapshot,
+            tile_enable_mask=tile_enable_masks[step_index],
+        )
+        for step_index, scheduler_snapshot in enumerate(scheduler_snapshots)
     ]
     idle_scheduler_snapshot = {
         "dma_valid_o": 0,
@@ -446,17 +507,14 @@ def top_npu_reference(
     tile_snapshots_by_index: List[List[Dict[str, object]]] = []
     for tile_index in range(sanitized_tile_count):
         tile_steps = []
-        for step_index, tile_enable_mask in enumerate(tile_enable_masks):
+        for step_index in range(len(tile_enable_masks)):
             delayed_scheduler_snapshot = (
                 scheduler_snapshots[step_index - 1]
                 if step_index > 0
                 else idle_scheduler_snapshot
             )
             delayed_control_snapshot = (
-                _cluster_control_outputs(
-                    scheduler_snapshot=delayed_scheduler_snapshot,
-                    tile_enable_mask=tile_enable_mask,
-                )
+                control_snapshots[step_index - 1]
                 if step_index > 0
                 else idle_control_snapshot
             )
@@ -495,12 +553,13 @@ def top_npu_reference(
             tile_snapshot = tile_snapshots_by_index[tile_index][step_index]
             psums.extend([int(value) for value in tile_snapshot["psums_o"]])
             valids.extend([int(value) for value in tile_snapshot["valids_o"]])
-        store_payload, store_valid_mask = _store_segment_payload(
+        interconnect_snapshot = _cluster_interconnect_outputs(
+            control_snapshot=control_snapshots[step_index],
+            dma_payload=[int(value) for value in scheduler_snapshot["dma_payload_o"]],
             psums=psums,
-            tile_enable_mask=tile_enable_masks[step_index],
             rows=rows,
             cols=cols,
-            burst_index=int(scheduler_snapshot.get("store_burst_index_o", 0)),
+            tile_count=sanitized_tile_count,
         )
 
         snapshots.append(
@@ -508,14 +567,10 @@ def top_npu_reference(
                 "scheduler_state_o": scheduler_snapshot["state_o"],
                 "busy_o": scheduler_snapshot["busy_o"],
                 "done_o": scheduler_snapshot["done_o"],
-                "result_write_valid_o": scheduler_snapshot["store_results_en_o"],
-                "result_write_addr_o": scheduler_snapshot["result_write_addr_o"],
-                "result_write_payload_o": (
-                    store_payload if int(scheduler_snapshot["store_results_en_o"]) else [0 for _ in psums]
-                ),
-                "result_write_valid_mask_o": (
-                    store_valid_mask if int(scheduler_snapshot["store_results_en_o"]) else [0 for _ in valids]
-                ),
+                "result_write_valid_o": interconnect_snapshot["result_write_valid_o"],
+                "result_write_addr_o": interconnect_snapshot["result_write_addr_o"],
+                "result_write_payload_o": interconnect_snapshot["result_write_payload_o"],
+                "result_write_valid_mask_o": interconnect_snapshot["result_write_valid_mask_o"],
                 "psums_o": psums,
                 "valids_o": valids,
             }
@@ -759,6 +814,69 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['store_burst_index_o']})"
                 )
 
+    for case in payload.get("cluster_interconnect", []):
+        rows = int(case.get("rows", 2))
+        cols = int(case.get("cols", 2))
+        tile_count = int(case.get("tile_count", 1))
+        observed_snapshots = cluster_interconnect_reference(
+            steps=case["steps"],
+            rows=rows,
+            cols=cols,
+            tile_count=tile_count,
+        )
+        for step_idx, step in enumerate(case["steps"]):
+            expected = step["expected"]
+            observed = observed_snapshots[step_idx]
+            if (
+                observed["tile_dma_valid_o"] != expected["tile_dma_valid_o"]
+                or observed["dma_write_weights_o"] != expected["dma_write_weights_o"]
+                or observed["dma_bank_select_o"] != expected["dma_bank_select_o"]
+                or observed["dma_local_addr_o"] != expected["dma_local_addr_o"]
+                or observed["dma_payload_o"] != expected["dma_payload_o"]
+                or observed["tile_load_vector_en_o"] != expected["tile_load_vector_en_o"]
+                or observed["activation_read_bank_select_o"]
+                != expected["activation_read_bank_select_o"]
+                or observed["activation_local_read_addr_o"]
+                != expected["activation_local_read_addr_o"]
+                or observed["weight_read_bank_select_o"]
+                != expected["weight_read_bank_select_o"]
+                or observed["weight_local_read_addr_o"] != expected["weight_local_read_addr_o"]
+                or observed["tile_compute_en_o"] != expected["tile_compute_en_o"]
+                or observed["tile_flush_pipeline_o"] != expected["tile_flush_pipeline_o"]
+                or observed["tile_clear_acc_o"] != expected["tile_clear_acc_o"]
+                or observed["tile_store_results_en_o"] != expected["tile_store_results_en_o"]
+                or observed["result_write_valid_o"] != expected["result_write_valid_o"]
+                or observed["result_write_addr_o"] != expected["result_write_addr_o"]
+                or observed["result_write_payload_o"] != expected["result_write_payload_o"]
+                or observed["result_write_valid_mask_o"] != expected["result_write_valid_mask_o"]
+            ):
+                failures.append(
+                    "cluster_interconnect/"
+                    f"{case['name']}/step_{step_idx}: expected "
+                    f"({expected['tile_dma_valid_o']}, {expected['dma_write_weights_o']}, "
+                    f"{expected['dma_bank_select_o']}, {expected['dma_local_addr_o']}, "
+                    f"{expected['dma_payload_o']}, {expected['tile_load_vector_en_o']}, "
+                    f"{expected['activation_read_bank_select_o']}, "
+                    f"{expected['activation_local_read_addr_o']}, "
+                    f"{expected['weight_read_bank_select_o']}, "
+                    f"{expected['weight_local_read_addr_o']}, "
+                    f"{expected['tile_compute_en_o']}, {expected['tile_flush_pipeline_o']}, "
+                    f"{expected['tile_clear_acc_o']}, {expected['tile_store_results_en_o']}, "
+                    f"{expected['result_write_valid_o']}, {expected['result_write_addr_o']}, "
+                    f"{expected['result_write_payload_o']}, {expected['result_write_valid_mask_o']}), got "
+                    f"({observed['tile_dma_valid_o']}, {observed['dma_write_weights_o']}, "
+                    f"{observed['dma_bank_select_o']}, {observed['dma_local_addr_o']}, "
+                    f"{observed['dma_payload_o']}, {observed['tile_load_vector_en_o']}, "
+                    f"{observed['activation_read_bank_select_o']}, "
+                    f"{observed['activation_local_read_addr_o']}, "
+                    f"{observed['weight_read_bank_select_o']}, "
+                    f"{observed['weight_local_read_addr_o']}, "
+                    f"{observed['tile_compute_en_o']}, {observed['tile_flush_pipeline_o']}, "
+                    f"{observed['tile_clear_acc_o']}, {observed['tile_store_results_en_o']}, "
+                    f"{observed['result_write_valid_o']}, {observed['result_write_addr_o']}, "
+                    f"{observed['result_write_payload_o']}, {observed['result_write_valid_mask_o']})"
+                )
+
     for case in payload.get("tile_compute_unit", []):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
@@ -840,6 +958,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
         + sum(len(case["steps"]) for case in payload.get("scratchpad_controller", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler", []))
         + sum(len(case["steps"]) for case in payload.get("cluster_control", []))
+        + sum(len(case["steps"]) for case in payload.get("cluster_interconnect", []))
         + sum(len(case["steps"]) for case in payload.get("tile_compute_unit", []))
         + sum(len(case["steps"]) for case in payload.get("top_npu", []))
     )
@@ -890,6 +1009,67 @@ def _cluster_control_outputs(
         "store_results_en_o": int(scheduler_snapshot.get("store_results_en_o", 0)),
         "result_write_addr_o": int(scheduler_snapshot.get("result_write_addr_o", 0)),
         "store_burst_index_o": int(scheduler_snapshot.get("store_burst_index_o", 0)),
+    }
+
+
+def _cluster_interconnect_outputs(
+    control_snapshot: Dict[str, object],
+    dma_payload: List[int],
+    psums: List[int],
+    rows: int,
+    cols: int,
+    tile_count: int,
+) -> Dict[str, object]:
+    sanitized_tile_count = _sanitize_tile_count(tile_count)
+    sanitized_dma_payload = [int(value) for value in dma_payload[: max(rows, cols)]]
+    if len(sanitized_dma_payload) < max(rows, cols):
+        sanitized_dma_payload.extend([0 for _ in range(max(rows, cols) - len(sanitized_dma_payload))])
+    store_payload, store_valid_mask = _store_segment_payload(
+        psums=[int(value) for value in psums],
+        tile_enable_mask=_sanitize_tile_enable_mask(
+            control_snapshot.get("tile_store_results_en_o"), sanitized_tile_count
+        ),
+        rows=rows,
+        cols=cols,
+        burst_index=int(control_snapshot.get("store_burst_index_o", 0)),
+    )
+    result_write_valid = int(control_snapshot.get("store_results_en_o", 0))
+    if not result_write_valid:
+        store_payload = [0 for _ in psums]
+        store_valid_mask = [0 for _ in psums]
+    return {
+        "tile_dma_valid_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_dma_valid_o"), sanitized_tile_count
+        ),
+        "dma_write_weights_o": int(control_snapshot.get("dma_write_weights_o", 0)),
+        "dma_bank_select_o": int(bool(control_snapshot.get("dma_bank_select_o", 0))),
+        "dma_local_addr_o": int(control_snapshot.get("dma_local_addr_o", 0)),
+        "dma_payload_o": sanitized_dma_payload,
+        "tile_load_vector_en_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_load_vector_en_o"), sanitized_tile_count
+        ),
+        "activation_read_bank_select_o": int(
+            bool(control_snapshot.get("activation_read_bank_select_o", 0))
+        ),
+        "activation_local_read_addr_o": int(control_snapshot.get("activation_local_read_addr_o", 0)),
+        "weight_read_bank_select_o": int(bool(control_snapshot.get("weight_read_bank_select_o", 0))),
+        "weight_local_read_addr_o": int(control_snapshot.get("weight_local_read_addr_o", 0)),
+        "tile_compute_en_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_compute_en_o"), sanitized_tile_count
+        ),
+        "tile_flush_pipeline_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_flush_pipeline_o"), sanitized_tile_count
+        ),
+        "tile_clear_acc_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_clear_acc_o"), sanitized_tile_count
+        ),
+        "tile_store_results_en_o": _sanitize_tile_enable_mask(
+            control_snapshot.get("tile_store_results_en_o"), sanitized_tile_count
+        ),
+        "result_write_valid_o": result_write_valid,
+        "result_write_addr_o": int(control_snapshot.get("result_write_addr_o", 0)),
+        "result_write_payload_o": store_payload,
+        "result_write_valid_mask_o": store_valid_mask,
     }
 
 

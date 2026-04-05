@@ -197,6 +197,15 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "rtl"
+                    / "cluster_interconnect.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "rtl"
                     / "top_npu.sv"
                 ).exists()
             )
@@ -207,11 +216,20 @@ class PipelineTest(unittest.TestCase):
                 / "rtl"
                 / "cluster_control.sv"
             ).read_text(encoding="utf-8")
+            cluster_interconnect_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "cluster_interconnect.sv"
+            ).read_text(encoding="utf-8")
             self.assertIn("module cluster_control", cluster_control_rtl)
             self.assertIn(
                 f"parameter int TILE_COUNT = {expected_tile_count}",
                 cluster_control_rtl,
             )
+            self.assertIn("module cluster_interconnect", cluster_interconnect_rtl)
+            self.assertIn("cluster_interconnect #(", top_npu_rtl)
             self.assertIn("cluster_control #(", top_npu_rtl)
             self.assertTrue(
                 (
@@ -264,6 +282,15 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "tb"
+                    / "cluster_interconnect_tb.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "tb"
                     / "systolic_tile_rect_tb.sv"
                 ).exists()
             )
@@ -298,6 +325,7 @@ class PipelineTest(unittest.TestCase):
                 f"tile count architetturale {expected_tile_count}",
                 " ".join(payload["generated"]["notes"]),
             )
+            self.assertIn("cluster_interconnect", " ".join(payload["generated"]["notes"]))
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())
@@ -360,6 +388,11 @@ class PipelineTest(unittest.TestCase):
                 report["summary"]["control_path"]["average_active_tiles_per_compute_cycle"],
                 1.25,
             )
+            self.assertEqual(report["summary"]["interconnect_path"]["dma_fanout_cycles"], 8)
+            self.assertEqual(report["summary"]["interconnect_path"]["load_fanout_cycles"], 6)
+            self.assertEqual(report["summary"]["interconnect_path"]["compute_fanout_cycles"], 4)
+            self.assertEqual(report["summary"]["interconnect_path"]["store_lane_write_cycles"], 16)
+            self.assertEqual(report["summary"]["interconnect_path"]["peak_store_lanes_per_cycle"], 4)
             self.assertEqual(report["summary"]["memory_path"]["dma_cycles"], 8)
             self.assertEqual(report["summary"]["memory_path"]["dma_activation_cycles"], 4)
             self.assertEqual(report["summary"]["memory_path"]["dma_weight_cycles"], 4)
@@ -456,6 +489,10 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report_payload["cases"][2]["tile_count"], 2)
             self.assertEqual(report_payload["cases"][2]["program"]["tile_enable_i"], [1, 1])
             self.assertEqual(report_payload["cases"][0]["trace"][0]["control_path"]["tile_dma_valid"], [1])
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][0]["interconnect_path"]["tile_dma_valid"],
+                [1],
+            )
             self.assertEqual(report_payload["cases"][0]["trace"][2]["control_path"]["dma_bank"], 1)
             self.assertEqual(
                 report_payload["cases"][0]["trace"][4]["control_path"]["tile_load_vector_en"],
@@ -482,6 +519,10 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(
                 report_payload["cases"][0]["trace"][8]["memory_path"]["store_valid_mask"],
+                [1, 1, 0, 0],
+            )
+            self.assertEqual(
+                report_payload["cases"][0]["trace"][8]["interconnect_path"]["result_write_valid_mask"],
                 [1, 1, 0, 0],
             )
             self.assertEqual(report_payload["cases"][0]["trace"][9]["memory_path"]["store_valid"], 1)

@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from create_npu.golden_model import cluster_control_reference, scheduler_reference, top_npu_reference
+from create_npu.golden_model import (
+    cluster_control_reference,
+    cluster_interconnect_reference,
+    scheduler_reference,
+    top_npu_reference,
+)
 from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle, RequirementSpec
 
 
@@ -98,6 +103,18 @@ def emit_seed_rtl(
         encoding="utf-8",
     )
 
+    cluster_interconnect_path = rtl_dir / "cluster_interconnect.sv"
+    cluster_interconnect_path.write_text(
+        _cluster_interconnect_template(
+            operand_width=operand_width,
+            acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+            seed_tile_count=seed_tile_count,
+        ),
+        encoding="utf-8",
+    )
+
     top_npu_path = rtl_dir / "top_npu.sv"
     top_npu_path.write_text(
         _top_npu_template(
@@ -164,6 +181,12 @@ def emit_seed_rtl(
         encoding="utf-8",
     )
 
+    cluster_interconnect_tb_path = tb_dir / "cluster_interconnect_tb.sv"
+    cluster_interconnect_tb_path.write_text(
+        _cluster_interconnect_tb_template(operand_width=operand_width, acc_width=acc_width),
+        encoding="utf-8",
+    )
+
     top_npu_tb_path = tb_dir / "top_npu_tb.sv"
     top_npu_tb_path.write_text(
         _top_npu_tb_template(operand_width=operand_width, acc_width=acc_width),
@@ -212,14 +235,14 @@ def emit_seed_rtl(
     else:
         notes.append(
             "Il seed RTL propaga direttamente il tile count architetturale "
-            f"{seed_tile_count} nei default di `cluster_control` e `top_npu`."
+            f"{seed_tile_count} nei default di `cluster_control`, `cluster_interconnect` e `top_npu`."
         )
 
     notes.append(
-        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control` e `top_npu`."
+        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`."
     )
     notes.append(
-        "Il cluster seed separa ora il control-path nel modulo `cluster_control`, lasciando a `top_npu` il solo wiring del data-path e l'aggregazione dei risultati."
+        "Il cluster seed separa ora il control-path nel modulo `cluster_control` e il fanout multi-tile nel modulo `cluster_interconnect`, lasciando a `top_npu` il solo assemblaggio del top-level."
     )
 
     supporting_files = [str(intent_path), str(reference_cases_path)]
@@ -236,6 +259,7 @@ def emit_seed_rtl(
             str(tile_compute_unit_path),
             str(scheduler_path),
             str(cluster_control_path),
+            str(cluster_interconnect_path),
             str(top_npu_path),
         ],
         testbench_files=[
@@ -248,6 +272,7 @@ def emit_seed_rtl(
             str(tile_compute_tb_path),
             str(scheduler_tb_path),
             str(cluster_control_tb_path),
+            str(cluster_interconnect_tb_path),
             str(top_npu_tb_path),
         ],
         primary_module="top_npu",
@@ -2396,6 +2421,311 @@ endmodule
 """
 
 
+def _cluster_interconnect_template(
+    operand_width: int,
+    acc_width: int,
+    seed_rows: int,
+    seed_cols: int,
+    seed_tile_count: int,
+) -> str:
+    return f"""module cluster_interconnect #(
+  parameter int DATA_WIDTH = {operand_width},
+  parameter int ACC_WIDTH = {acc_width},
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
+  parameter int DEPTH = 4,
+  parameter int TILE_COUNT = {seed_tile_count},
+  parameter int PE_COUNT = ROWS * COLS,
+  parameter int TOTAL_PE_COUNT = TILE_COUNT * PE_COUNT,
+  parameter int ADDR_WIDTH = $clog2(DEPTH),
+  parameter int MAX_DIM = (ROWS > COLS) ? ROWS : COLS
+) (
+  input  logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i,
+  input  logic [TILE_COUNT-1:0] tile_dma_valid_i,
+  input  logic dma_write_weights_i,
+  input  logic dma_bank_select_i,
+  input  logic [ADDR_WIDTH-1:0] dma_local_addr_i,
+  input  logic [TILE_COUNT-1:0] tile_load_vector_en_i,
+  input  logic activation_read_bank_select_i,
+  input  logic [ADDR_WIDTH-1:0] activation_local_read_addr_i,
+  input  logic weight_read_bank_select_i,
+  input  logic [ADDR_WIDTH-1:0] weight_local_read_addr_i,
+  input  logic [TILE_COUNT-1:0] tile_compute_en_i,
+  input  logic [TILE_COUNT-1:0] tile_flush_pipeline_i,
+  input  logic [TILE_COUNT-1:0] tile_clear_acc_i,
+  input  logic [TILE_COUNT-1:0] tile_store_results_en_i,
+  input  logic store_results_en_i,
+  input  logic [ADDR_WIDTH-1:0] result_write_addr_i,
+  input  logic [ADDR_WIDTH-1:0] store_burst_index_i,
+  input  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] tile_psums_i,
+  output logic [TILE_COUNT-1:0] tile_dma_valid_o,
+  output logic dma_write_weights_o,
+  output logic dma_bank_select_o,
+  output logic [ADDR_WIDTH-1:0] dma_local_addr_o,
+  output logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_o,
+  output logic [TILE_COUNT-1:0] tile_load_vector_en_o,
+  output logic activation_read_bank_select_o,
+  output logic [ADDR_WIDTH-1:0] activation_local_read_addr_o,
+  output logic weight_read_bank_select_o,
+  output logic [ADDR_WIDTH-1:0] weight_local_read_addr_o,
+  output logic [TILE_COUNT-1:0] tile_compute_en_o,
+  output logic [TILE_COUNT-1:0] tile_flush_pipeline_o,
+  output logic [TILE_COUNT-1:0] tile_clear_acc_o,
+  output logic result_write_valid_o,
+  output logic [ADDR_WIDTH-1:0] result_write_addr_o,
+  output logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] result_write_payload_o,
+  output logic [TOTAL_PE_COUNT-1:0] result_write_valid_mask_o
+);
+  genvar store_tile_idx;
+  genvar store_row_idx;
+  genvar store_col_idx;
+
+  assign tile_dma_valid_o = tile_dma_valid_i;
+  assign dma_write_weights_o = dma_write_weights_i;
+  assign dma_bank_select_o = dma_bank_select_i;
+  assign dma_local_addr_o = dma_local_addr_i;
+  assign dma_payload_o = dma_payload_i;
+  assign tile_load_vector_en_o = tile_load_vector_en_i;
+  assign activation_read_bank_select_o = activation_read_bank_select_i;
+  assign activation_local_read_addr_o = activation_local_read_addr_i;
+  assign weight_read_bank_select_o = weight_read_bank_select_i;
+  assign weight_local_read_addr_o = weight_local_read_addr_i;
+  assign tile_compute_en_o = tile_compute_en_i;
+  assign tile_flush_pipeline_o = tile_flush_pipeline_i;
+  assign tile_clear_acc_o = tile_clear_acc_i;
+  assign result_write_valid_o = store_results_en_i;
+  assign result_write_addr_o = result_write_addr_i;
+
+  generate
+    for (store_tile_idx = 0; store_tile_idx < TILE_COUNT; store_tile_idx = store_tile_idx + 1) begin : gen_store_tiles
+      for (store_row_idx = 0; store_row_idx < ROWS; store_row_idx = store_row_idx + 1) begin : gen_store_rows
+        for (store_col_idx = 0; store_col_idx < COLS; store_col_idx = store_col_idx + 1) begin : gen_store_cols
+          localparam int STORE_LANE_IDX = (store_tile_idx * PE_COUNT) + (store_row_idx * COLS) + store_col_idx;
+          localparam logic [ADDR_WIDTH-1:0] STORE_ROW_ADDR = store_row_idx[ADDR_WIDTH-1:0];
+          assign result_write_valid_mask_o[STORE_LANE_IDX] =
+            tile_store_results_en_i[store_tile_idx] &&
+            (store_burst_index_i == STORE_ROW_ADDR);
+          assign result_write_payload_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] =
+            (
+              tile_store_results_en_i[store_tile_idx] &&
+              (store_burst_index_i == STORE_ROW_ADDR)
+            ) ? tile_psums_i[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] : '0;
+        end
+      end
+    end
+  endgenerate
+endmodule
+"""
+
+
+def _cluster_interconnect_tb_template(operand_width: int, acc_width: int) -> str:
+    return f"""module cluster_interconnect_tb;
+  localparam int DATA_WIDTH = {operand_width};
+  localparam int ACC_WIDTH = {acc_width};
+  localparam int ROWS = 2;
+  localparam int COLS = 2;
+  localparam int DEPTH = 4;
+  localparam int TILE_COUNT = 2;
+  localparam int PE_COUNT = ROWS * COLS;
+  localparam int TOTAL_PE_COUNT = TILE_COUNT * PE_COUNT;
+  localparam int ADDR_WIDTH = $clog2(DEPTH);
+  localparam int MAX_DIM = (ROWS > COLS) ? ROWS : COLS;
+
+  logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_i;
+  logic [TILE_COUNT-1:0] tile_dma_valid_i;
+  logic dma_write_weights_i;
+  logic dma_bank_select_i;
+  logic [ADDR_WIDTH-1:0] dma_local_addr_i;
+  logic [TILE_COUNT-1:0] tile_load_vector_en_i;
+  logic activation_read_bank_select_i;
+  logic [ADDR_WIDTH-1:0] activation_local_read_addr_i;
+  logic weight_read_bank_select_i;
+  logic [ADDR_WIDTH-1:0] weight_local_read_addr_i;
+  logic [TILE_COUNT-1:0] tile_compute_en_i;
+  logic [TILE_COUNT-1:0] tile_flush_pipeline_i;
+  logic [TILE_COUNT-1:0] tile_clear_acc_i;
+  logic [TILE_COUNT-1:0] tile_store_results_en_i;
+  logic store_results_en_i;
+  logic [ADDR_WIDTH-1:0] result_write_addr_i;
+  logic [ADDR_WIDTH-1:0] store_burst_index_i;
+  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] tile_psums_i;
+  logic [TILE_COUNT-1:0] tile_dma_valid_o;
+  logic dma_write_weights_o;
+  logic dma_bank_select_o;
+  logic [ADDR_WIDTH-1:0] dma_local_addr_o;
+  logic signed [MAX_DIM*DATA_WIDTH-1:0] dma_payload_o;
+  logic [TILE_COUNT-1:0] tile_load_vector_en_o;
+  logic activation_read_bank_select_o;
+  logic [ADDR_WIDTH-1:0] activation_local_read_addr_o;
+  logic weight_read_bank_select_o;
+  logic [ADDR_WIDTH-1:0] weight_local_read_addr_o;
+  logic [TILE_COUNT-1:0] tile_compute_en_o;
+  logic [TILE_COUNT-1:0] tile_flush_pipeline_o;
+  logic [TILE_COUNT-1:0] tile_clear_acc_o;
+  logic result_write_valid_o;
+  logic [ADDR_WIDTH-1:0] result_write_addr_o;
+  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] result_write_payload_o;
+  logic [TOTAL_PE_COUNT-1:0] result_write_valid_mask_o;
+
+  cluster_interconnect #(
+    .DATA_WIDTH(DATA_WIDTH),
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS),
+    .DEPTH(DEPTH),
+    .TILE_COUNT(TILE_COUNT)
+  ) dut (
+    .dma_payload_i(dma_payload_i),
+    .tile_dma_valid_i(tile_dma_valid_i),
+    .dma_write_weights_i(dma_write_weights_i),
+    .dma_bank_select_i(dma_bank_select_i),
+    .dma_local_addr_i(dma_local_addr_i),
+    .tile_load_vector_en_i(tile_load_vector_en_i),
+    .activation_read_bank_select_i(activation_read_bank_select_i),
+    .activation_local_read_addr_i(activation_local_read_addr_i),
+    .weight_read_bank_select_i(weight_read_bank_select_i),
+    .weight_local_read_addr_i(weight_local_read_addr_i),
+    .tile_compute_en_i(tile_compute_en_i),
+    .tile_flush_pipeline_i(tile_flush_pipeline_i),
+    .tile_clear_acc_i(tile_clear_acc_i),
+    .tile_store_results_en_i(tile_store_results_en_i),
+    .store_results_en_i(store_results_en_i),
+    .result_write_addr_i(result_write_addr_i),
+    .store_burst_index_i(store_burst_index_i),
+    .tile_psums_i(tile_psums_i),
+    .tile_dma_valid_o(tile_dma_valid_o),
+    .dma_write_weights_o(dma_write_weights_o),
+    .dma_bank_select_o(dma_bank_select_o),
+    .dma_local_addr_o(dma_local_addr_o),
+    .dma_payload_o(dma_payload_o),
+    .tile_load_vector_en_o(tile_load_vector_en_o),
+    .activation_read_bank_select_o(activation_read_bank_select_o),
+    .activation_local_read_addr_o(activation_local_read_addr_o),
+    .weight_read_bank_select_o(weight_read_bank_select_o),
+    .weight_local_read_addr_o(weight_local_read_addr_o),
+    .tile_compute_en_o(tile_compute_en_o),
+    .tile_flush_pipeline_o(tile_flush_pipeline_o),
+    .tile_clear_acc_o(tile_clear_acc_o),
+    .result_write_valid_o(result_write_valid_o),
+    .result_write_addr_o(result_write_addr_o),
+    .result_write_payload_o(result_write_payload_o),
+    .result_write_valid_mask_o(result_write_valid_mask_o)
+  );
+
+  task automatic expect_outputs(
+    input logic [TILE_COUNT-1:0] expected_tile_dma_valid,
+    input logic expected_dma_write_weights,
+    input logic expected_dma_bank,
+    input integer expected_dma_local_addr,
+    input integer expected_dma_payload0,
+    input integer expected_dma_payload1,
+    input logic [TILE_COUNT-1:0] expected_tile_load,
+    input logic expected_activation_bank,
+    input integer expected_activation_local_addr,
+    input logic expected_weight_bank,
+    input integer expected_weight_local_addr,
+    input logic [TILE_COUNT-1:0] expected_tile_compute,
+    input logic [TILE_COUNT-1:0] expected_tile_flush,
+    input logic [TILE_COUNT-1:0] expected_tile_clear,
+    input logic expected_store_valid,
+    input integer expected_store_addr,
+    input logic [TOTAL_PE_COUNT-1:0] expected_store_mask,
+    input integer expected_payload0,
+    input integer expected_payload1,
+    input integer expected_payload2,
+    input integer expected_payload3,
+    input integer expected_payload4,
+    input integer expected_payload5,
+    input integer expected_payload6,
+    input integer expected_payload7
+  );
+    begin
+      #1;
+      if (tile_dma_valid_o !== expected_tile_dma_valid ||
+          dma_write_weights_o !== expected_dma_write_weights ||
+          dma_bank_select_o !== expected_dma_bank ||
+          dma_local_addr_o !== expected_dma_local_addr[ADDR_WIDTH-1:0] ||
+          dma_payload_o[DATA_WIDTH-1:0] !== expected_dma_payload0[DATA_WIDTH-1:0] ||
+          dma_payload_o[(2*DATA_WIDTH)-1:DATA_WIDTH] !== expected_dma_payload1[DATA_WIDTH-1:0] ||
+          tile_load_vector_en_o !== expected_tile_load ||
+          activation_read_bank_select_o !== expected_activation_bank ||
+          activation_local_read_addr_o !== expected_activation_local_addr[ADDR_WIDTH-1:0] ||
+          weight_read_bank_select_o !== expected_weight_bank ||
+          weight_local_read_addr_o !== expected_weight_local_addr[ADDR_WIDTH-1:0] ||
+          tile_compute_en_o !== expected_tile_compute ||
+          tile_flush_pipeline_o !== expected_tile_flush ||
+          tile_clear_acc_o !== expected_tile_clear ||
+          result_write_valid_o !== expected_store_valid ||
+          result_write_addr_o !== expected_store_addr[ADDR_WIDTH-1:0] ||
+          result_write_valid_mask_o !== expected_store_mask ||
+          result_write_payload_o[ACC_WIDTH-1:0] !== expected_payload0[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(2*ACC_WIDTH)-1:ACC_WIDTH] !== expected_payload1[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(3*ACC_WIDTH)-1:(2*ACC_WIDTH)] !== expected_payload2[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(4*ACC_WIDTH)-1:(3*ACC_WIDTH)] !== expected_payload3[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(5*ACC_WIDTH)-1:(4*ACC_WIDTH)] !== expected_payload4[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(6*ACC_WIDTH)-1:(5*ACC_WIDTH)] !== expected_payload5[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(7*ACC_WIDTH)-1:(6*ACC_WIDTH)] !== expected_payload6[ACC_WIDTH-1:0] ||
+          result_write_payload_o[(8*ACC_WIDTH)-1:(7*ACC_WIDTH)] !== expected_payload7[ACC_WIDTH-1:0]) begin
+        $fatal(1, "cluster_interconnect_tb failed");
+      end
+    end
+  endtask
+
+  initial begin
+    dma_payload_i = '0;
+    tile_dma_valid_i = '0;
+    dma_write_weights_i = 1'b0;
+    dma_bank_select_i = 1'b0;
+    dma_local_addr_i = '0;
+    tile_load_vector_en_i = '0;
+    activation_read_bank_select_i = 1'b0;
+    activation_local_read_addr_i = '0;
+    weight_read_bank_select_i = 1'b0;
+    weight_local_read_addr_i = '0;
+    tile_compute_en_i = '0;
+    tile_flush_pipeline_i = '0;
+    tile_clear_acc_i = '0;
+    tile_store_results_en_i = '0;
+    store_results_en_i = 1'b0;
+    result_write_addr_i = '0;
+    store_burst_index_i = '0;
+    tile_psums_i = '0;
+    expect_outputs(2'b00, 1'b0, 1'b0, 0, 0, 0, 2'b00, 1'b0, 0, 1'b0, 0, 2'b00, 2'b00, 2'b00, 1'b0, 0, 8'b00000000, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    dma_payload_i = {{8'sd2, 8'sd1}};
+    tile_dma_valid_i = 2'b11;
+    dma_write_weights_i = 1'b1;
+    dma_bank_select_i = 1'b1;
+    dma_local_addr_i = 1;
+    tile_load_vector_en_i = 2'b10;
+    activation_read_bank_select_i = 1'b0;
+    activation_local_read_addr_i = 1;
+    weight_read_bank_select_i = 1'b1;
+    weight_local_read_addr_i = 0;
+    tile_compute_en_i = 2'b11;
+    tile_flush_pipeline_i = 2'b00;
+    tile_clear_acc_i = 2'b01;
+    tile_store_results_en_i = 2'b01;
+    store_results_en_i = 1'b1;
+    result_write_addr_i = 2;
+    store_burst_index_i = 0;
+    tile_psums_i = {{
+      32'sd80, 32'sd70, 32'sd60, 32'sd50,
+      32'sd40, 32'sd30, 32'sd20, 32'sd10
+    }};
+    expect_outputs(2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b1, 2, 8'b00000011, 10, 20, 0, 0, 0, 0, 0, 0);
+
+    tile_store_results_en_i = 2'b11;
+    store_burst_index_i = 1;
+    expect_outputs(2'b11, 1'b1, 1'b1, 1, 1, 2, 2'b10, 1'b0, 1, 1'b1, 0, 2'b11, 2'b00, 2'b01, 1'b1, 2, 8'b11001100, 0, 0, 30, 40, 0, 0, 70, 80);
+
+    $display("cluster_interconnect_tb passed");
+    $finish;
+  end
+endmodule
+"""
+
+
 def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_cols: int, seed_tile_count: int) -> str:
     return f"""module top_npu #(
   parameter int DATA_WIDTH = {operand_width},
@@ -2450,19 +2780,32 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   logic compute_en;
   logic flush_pipeline;
   logic clear_acc;
-  logic [TILE_COUNT-1:0] tile_dma_valid;
-  logic dma_write_weights_routed;
-  logic dma_bank_select;
-  logic [ADDR_WIDTH-1:0] dma_local_addr;
-  logic [TILE_COUNT-1:0] tile_load_vector_en;
-  logic activation_read_bank_select;
-  logic [ADDR_WIDTH-1:0] activation_local_read_addr;
-  logic weight_read_bank_select;
-  logic [ADDR_WIDTH-1:0] weight_local_read_addr;
-  logic [TILE_COUNT-1:0] tile_compute_en;
-  logic [TILE_COUNT-1:0] tile_flush_pipeline;
-  logic [TILE_COUNT-1:0] tile_clear_acc;
-  logic [TILE_COUNT-1:0] tile_store_results_en;
+  logic [TILE_COUNT-1:0] control_tile_dma_valid;
+  logic control_dma_write_weights;
+  logic control_dma_bank_select;
+  logic [ADDR_WIDTH-1:0] control_dma_local_addr;
+  logic [TILE_COUNT-1:0] control_tile_load_vector_en;
+  logic control_activation_read_bank_select;
+  logic [ADDR_WIDTH-1:0] control_activation_local_read_addr;
+  logic control_weight_read_bank_select;
+  logic [ADDR_WIDTH-1:0] control_weight_local_read_addr;
+  logic [TILE_COUNT-1:0] control_tile_compute_en;
+  logic [TILE_COUNT-1:0] control_tile_flush_pipeline;
+  logic [TILE_COUNT-1:0] control_tile_clear_acc;
+  logic [TILE_COUNT-1:0] control_tile_store_results_en;
+  logic [TILE_COUNT-1:0] fabric_tile_dma_valid;
+  logic fabric_dma_write_weights;
+  logic fabric_dma_bank_select;
+  logic [ADDR_WIDTH-1:0] fabric_dma_local_addr;
+  logic signed [MAX_DIM*DATA_WIDTH-1:0] fabric_dma_payload;
+  logic [TILE_COUNT-1:0] fabric_tile_load_vector_en;
+  logic fabric_activation_read_bank_select;
+  logic [ADDR_WIDTH-1:0] fabric_activation_local_read_addr;
+  logic fabric_weight_read_bank_select;
+  logic [ADDR_WIDTH-1:0] fabric_weight_local_read_addr;
+  logic [TILE_COUNT-1:0] fabric_tile_compute_en;
+  logic [TILE_COUNT-1:0] fabric_tile_flush_pipeline;
+  logic [TILE_COUNT-1:0] fabric_tile_clear_acc;
   logic store_results_en_routed;
   logic [ADDR_WIDTH-1:0] result_write_addr_routed;
   logic [ADDR_WIDTH-1:0] store_burst_index_routed;
@@ -2470,9 +2813,6 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   logic [TILE_COUNT-1:0] dma_done_unused;
   logic [TILE_COUNT-1:0] dma_busy_unused;
   genvar tile_idx;
-  genvar store_tile_idx;
-  genvar store_row_idx;
-  genvar store_col_idx;
 
   scheduler #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -2532,26 +2872,68 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .compute_en_i(compute_en),
     .flush_pipeline_i(flush_pipeline),
     .clear_acc_i(clear_acc),
-    .tile_dma_valid_o(tile_dma_valid),
-    .dma_write_weights_o(dma_write_weights_routed),
-    .dma_bank_select_o(dma_bank_select),
-    .dma_local_addr_o(dma_local_addr),
-    .tile_load_vector_en_o(tile_load_vector_en),
-    .activation_read_bank_select_o(activation_read_bank_select),
-    .activation_local_read_addr_o(activation_local_read_addr),
-    .weight_read_bank_select_o(weight_read_bank_select),
-    .weight_local_read_addr_o(weight_local_read_addr),
-    .tile_compute_en_o(tile_compute_en),
-    .tile_flush_pipeline_o(tile_flush_pipeline),
-    .tile_clear_acc_o(tile_clear_acc),
-    .tile_store_results_en_o(tile_store_results_en),
+    .tile_dma_valid_o(control_tile_dma_valid),
+    .dma_write_weights_o(control_dma_write_weights),
+    .dma_bank_select_o(control_dma_bank_select),
+    .dma_local_addr_o(control_dma_local_addr),
+    .tile_load_vector_en_o(control_tile_load_vector_en),
+    .activation_read_bank_select_o(control_activation_read_bank_select),
+    .activation_local_read_addr_o(control_activation_local_read_addr),
+    .weight_read_bank_select_o(control_weight_read_bank_select),
+    .weight_local_read_addr_o(control_weight_local_read_addr),
+    .tile_compute_en_o(control_tile_compute_en),
+    .tile_flush_pipeline_o(control_tile_flush_pipeline),
+    .tile_clear_acc_o(control_tile_clear_acc),
+    .tile_store_results_en_o(control_tile_store_results_en),
     .store_results_en_o(store_results_en_routed),
     .result_write_addr_o(result_write_addr_routed),
     .store_burst_index_o(store_burst_index_routed)
   );
 
-  assign result_write_valid_o = store_results_en_routed;
-  assign result_write_addr_o = result_write_addr_routed;
+  cluster_interconnect #(
+    .DATA_WIDTH(DATA_WIDTH),
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS),
+    .DEPTH(DEPTH),
+    .TILE_COUNT(TILE_COUNT)
+  ) cluster_interconnect_inst (
+    .dma_payload_i(dma_payload),
+    .tile_dma_valid_i(control_tile_dma_valid),
+    .dma_write_weights_i(control_dma_write_weights),
+    .dma_bank_select_i(control_dma_bank_select),
+    .dma_local_addr_i(control_dma_local_addr),
+    .tile_load_vector_en_i(control_tile_load_vector_en),
+    .activation_read_bank_select_i(control_activation_read_bank_select),
+    .activation_local_read_addr_i(control_activation_local_read_addr),
+    .weight_read_bank_select_i(control_weight_read_bank_select),
+    .weight_local_read_addr_i(control_weight_local_read_addr),
+    .tile_compute_en_i(control_tile_compute_en),
+    .tile_flush_pipeline_i(control_tile_flush_pipeline),
+    .tile_clear_acc_i(control_tile_clear_acc),
+    .tile_store_results_en_i(control_tile_store_results_en),
+    .store_results_en_i(store_results_en_routed),
+    .result_write_addr_i(result_write_addr_routed),
+    .store_burst_index_i(store_burst_index_routed),
+    .tile_psums_i(psums_o),
+    .tile_dma_valid_o(fabric_tile_dma_valid),
+    .dma_write_weights_o(fabric_dma_write_weights),
+    .dma_bank_select_o(fabric_dma_bank_select),
+    .dma_local_addr_o(fabric_dma_local_addr),
+    .dma_payload_o(fabric_dma_payload),
+    .tile_load_vector_en_o(fabric_tile_load_vector_en),
+    .activation_read_bank_select_o(fabric_activation_read_bank_select),
+    .activation_local_read_addr_o(fabric_activation_local_read_addr),
+    .weight_read_bank_select_o(fabric_weight_read_bank_select),
+    .weight_local_read_addr_o(fabric_weight_local_read_addr),
+    .tile_compute_en_o(fabric_tile_compute_en),
+    .tile_flush_pipeline_o(fabric_tile_flush_pipeline),
+    .tile_clear_acc_o(fabric_tile_clear_acc),
+    .result_write_valid_o(result_write_valid_o),
+    .result_write_addr_o(result_write_addr_o),
+    .result_write_payload_o(result_write_payload_o),
+    .result_write_valid_mask_o(result_write_valid_mask_o)
+  );
 
   generate
     for (tile_idx = 0; tile_idx < TILE_COUNT; tile_idx = tile_idx + 1) begin : gen_tiles
@@ -2564,42 +2946,26 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
       ) tile_compute_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .dma_valid_i(tile_dma_valid[tile_idx]),
-        .dma_write_weights_i(dma_write_weights_routed),
-        .dma_addr_i(dma_local_addr),
-        .dma_payload_i(dma_payload),
-        .activation_write_bank_i(dma_bank_select),
-        .weight_write_bank_i(dma_bank_select),
-        .load_vector_en_i(tile_load_vector_en[tile_idx]),
-        .activation_read_bank_i(activation_read_bank_select),
-        .activation_read_addr_i(activation_local_read_addr),
-        .weight_read_bank_i(weight_read_bank_select),
-        .weight_read_addr_i(weight_local_read_addr),
-        .compute_en_i(tile_compute_en[tile_idx]),
-        .flush_pipeline_i(tile_flush_pipeline[tile_idx]),
-        .clear_acc_i(tile_clear_acc[tile_idx]),
+        .dma_valid_i(fabric_tile_dma_valid[tile_idx]),
+        .dma_write_weights_i(fabric_dma_write_weights),
+        .dma_addr_i(fabric_dma_local_addr),
+        .dma_payload_i(fabric_dma_payload),
+        .activation_write_bank_i(fabric_dma_bank_select),
+        .weight_write_bank_i(fabric_dma_bank_select),
+        .load_vector_en_i(fabric_tile_load_vector_en[tile_idx]),
+        .activation_read_bank_i(fabric_activation_read_bank_select),
+        .activation_read_addr_i(fabric_activation_local_read_addr),
+        .weight_read_bank_i(fabric_weight_read_bank_select),
+        .weight_read_addr_i(fabric_weight_local_read_addr),
+        .compute_en_i(fabric_tile_compute_en[tile_idx]),
+        .flush_pipeline_i(fabric_tile_flush_pipeline[tile_idx]),
+        .clear_acc_i(fabric_tile_clear_acc[tile_idx]),
         .scratchpad_vector_valid_o(scratchpad_vector_valid_unused[tile_idx]),
         .dma_done_o(dma_done_unused[tile_idx]),
         .dma_busy_o(dma_busy_unused[tile_idx]),
         .psums_o(psums_o[(tile_idx * PE_COUNT * ACC_WIDTH) +: (PE_COUNT * ACC_WIDTH)]),
         .valids_o(valids_o[(tile_idx * PE_COUNT) +: PE_COUNT])
       );
-    end
-    for (store_tile_idx = 0; store_tile_idx < TILE_COUNT; store_tile_idx = store_tile_idx + 1) begin : gen_store_tiles
-      for (store_row_idx = 0; store_row_idx < ROWS; store_row_idx = store_row_idx + 1) begin : gen_store_rows
-        for (store_col_idx = 0; store_col_idx < COLS; store_col_idx = store_col_idx + 1) begin : gen_store_cols
-          localparam int STORE_LANE_IDX = (store_tile_idx * PE_COUNT) + (store_row_idx * COLS) + store_col_idx;
-          localparam logic [ADDR_WIDTH-1:0] STORE_ROW_ADDR = store_row_idx[ADDR_WIDTH-1:0];
-          assign result_write_valid_mask_o[STORE_LANE_IDX] =
-            tile_store_results_en[store_tile_idx] &&
-            (store_burst_index_routed == STORE_ROW_ADDR);
-          assign result_write_payload_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] =
-            (
-              tile_store_results_en[store_tile_idx] &&
-              (store_burst_index_routed == STORE_ROW_ADDR)
-            ) ? psums_o[STORE_LANE_IDX*ACC_WIDTH +: ACC_WIDTH] : '0;
-        end
-      end
     end
   endgenerate
 endmodule
@@ -3150,6 +3516,85 @@ def _cluster_control_sequence_case() -> Dict[str, object]:
 
     return {
         "name": "single_slot_control_routing",
+        "tile_count": 2,
+        "rows": 2,
+        "cols": 2,
+        "depth": 4,
+        "steps": steps,
+    }
+
+
+def _cluster_interconnect_sequence_case() -> Dict[str, object]:
+    steps = [
+        {
+            "dma_payload_i": [0, 0],
+            "tile_dma_valid_i": [0, 0],
+            "dma_write_weights_i": 0,
+            "dma_bank_select_i": 0,
+            "dma_local_addr_i": 0,
+            "tile_load_vector_en_i": [0, 0],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 0,
+            "weight_read_bank_select_i": 0,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [0, 0],
+            "tile_flush_pipeline_i": [0, 0],
+            "tile_clear_acc_i": [0, 0],
+            "tile_store_results_en_i": [0, 0],
+            "store_results_en_i": 0,
+            "result_write_addr_i": 0,
+            "store_burst_index_i": 0,
+            "tile_psums_i": [0, 0, 0, 0, 0, 0, 0, 0],
+        },
+        {
+            "dma_payload_i": [1, 2],
+            "tile_dma_valid_i": [1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 1,
+            "tile_load_vector_en_i": [0, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 1,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [1, 1],
+            "tile_flush_pipeline_i": [0, 0],
+            "tile_clear_acc_i": [1, 0],
+            "tile_store_results_en_i": [1, 0],
+            "store_results_en_i": 1,
+            "result_write_addr_i": 2,
+            "store_burst_index_i": 0,
+            "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
+        },
+        {
+            "dma_payload_i": [1, 2],
+            "tile_dma_valid_i": [1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 1,
+            "tile_load_vector_en_i": [0, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 1,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [1, 1],
+            "tile_flush_pipeline_i": [0, 0],
+            "tile_clear_acc_i": [1, 0],
+            "tile_store_results_en_i": [1, 1],
+            "store_results_en_i": 1,
+            "result_write_addr_i": 2,
+            "store_burst_index_i": 1,
+            "tile_psums_i": [10, 20, 30, 40, 50, 60, 70, 80],
+        },
+    ]
+    for payload, expected in zip(
+        steps,
+        cluster_interconnect_reference(steps=steps, rows=2, cols=2, tile_count=2),
+    ):
+        payload["expected"] = expected
+
+    return {
+        "name": "store_fanout_routing",
         "tile_count": 2,
         "rows": 2,
         "cols": 2,
@@ -3875,6 +4320,7 @@ def _reference_cases() -> Dict[str, List[Dict[str, object]]]:
         ],
         "scheduler": [_scheduler_sequence_case(), _scheduler_short_sequence_case()],
         "cluster_control": [_cluster_control_sequence_case()],
+        "cluster_interconnect": [_cluster_interconnect_sequence_case()],
         "top_npu": [
             _top_npu_sequence_case(),
             _top_npu_short_sequence_case(),

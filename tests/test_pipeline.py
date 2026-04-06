@@ -690,6 +690,16 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(python_reference["available"])
             self.assertTrue(python_reference["passed"])
             self.assertIn("casi", python_reference["summary"])
+            reference_coverage = next(
+                result for result in payload["tool_results"] if result["name"] == "reference_coverage"
+            )
+            self.assertTrue(reference_coverage["available"])
+            self.assertTrue(reference_coverage["passed"])
+            self.assertIn("Coverage score", reference_coverage["summary"])
+            self.assertIn(
+                "coverage_report.json",
+                " ".join(payload["generated"]["supporting_files"]),
+            )
             self.assertGreaterEqual(payload["score"], 0.0)
             self.assertIn(
                 f"{expected_rows}x{expected_cols}",
@@ -1737,7 +1747,13 @@ def _make_fake_pipeline_result(
         supporting_files=supporting_files,
     )
     tool_results = []
-    for tool_name in ("python_reference", "verilator_lint", "iverilog_sim", "yosys_synth"):
+    for tool_name in (
+        "python_reference",
+        "reference_coverage",
+        "verilator_lint",
+        "iverilog_sim",
+        "yosys_synth",
+    ):
         available = tool_name != missing_tool_name
         tool_results.append(
             ToolResult(

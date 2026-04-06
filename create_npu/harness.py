@@ -7,6 +7,7 @@ from typing import Dict, List
 
 from create_npu.golden_model import evaluate_reference_cases
 from create_npu.models import GeneratedDesignBundle, ToolResult
+from create_npu.reference_coverage import evaluate_reference_coverage, format_reference_coverage_summary
 
 
 class VerificationHarness:
@@ -18,6 +19,7 @@ class VerificationHarness:
     def run(self, bundle: GeneratedDesignBundle) -> List[ToolResult]:
         results = [
             self._run_python_reference(bundle),
+            self._run_reference_coverage(bundle),
             self._run_verilator_lint(bundle),
             self._run_iverilog_sim(bundle),
             self._run_yosys_synth(bundle),
@@ -43,6 +45,39 @@ class VerificationHarness:
             passed=passed,
             return_code=0 if passed else 1,
             summary=summary,
+            log_path=str(log_path),
+        )
+
+    def _run_reference_coverage(self, bundle: GeneratedDesignBundle) -> ToolResult:
+        if not bundle.reference_cases_path:
+            return ToolResult(
+                name="reference_coverage",
+                available=False,
+                passed=None,
+                return_code=None,
+                summary="Manifest dei casi di riferimento assente.",
+            )
+
+        passed, report = evaluate_reference_coverage(bundle.reference_cases_path)
+        coverage_report_path = self.output_dir / "coverage_report.json"
+        coverage_report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if str(coverage_report_path) not in bundle.supporting_files:
+            bundle.supporting_files.append(str(coverage_report_path))
+        log_lines = [format_reference_coverage_summary(report)]
+        failures = report.get("failures", [])
+        if failures:
+            log_lines.extend(f"- {failure}" for failure in failures)
+        log_path = self.log_dir / "reference_coverage.log"
+        log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+        return ToolResult(
+            name="reference_coverage",
+            available=True,
+            passed=passed,
+            return_code=0 if passed else 1,
+            summary=log_lines[0],
             log_path=str(log_path),
         )
 

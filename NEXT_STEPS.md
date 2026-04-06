@@ -90,7 +90,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 - [x] Rafforzare la verifica con casi randomizzati e stress test su backpressure, flush e multi-tile.
 - [x] Estendere i casi stress ai moduli interni oltre `top_npu`.
-- [ ] Integrare coverage o check piu' quantitativi oltre l'attuale golden model.
+- [x] Integrare coverage o check piu' quantitativi oltre l'attuale golden model.
 
 ## Dataset e Learning Loop
 
@@ -113,4 +113,5 @@ Il prossimo milestone puo' essere considerato chiuso quando:
 - il programma compilato e' persistito negli artifact della run e riportato in `design_intent` e `execution_report`;
 - i vettori di verifica top-level riflettono il programma compilato senza rompere il flow seed RTL corrente;
 - la verifica include casi stress deterministici per backpressure, flush e multi-tile senza alterare le metriche smoke del benchmark;
-- i test Python, il benchmark locale e la regressione Docker full-toolchain restano verdi.
+- i test Python, il benchmark locale e la regressione Docker full-toolchain restano verdi;
+- il flow espone anche un report di coverage quantitativa sui casi di riferimento oltre al solo golden model.

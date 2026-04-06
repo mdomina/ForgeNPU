@@ -59,6 +59,7 @@ def score_design(
 
     tool_weights = {
         "python_reference": 15.0,
+        "reference_coverage": 5.0,
         "verilator_lint": 20.0,
         "iverilog_sim": 25.0,
         "yosys_synth": 10.0,

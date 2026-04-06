@@ -201,6 +201,9 @@ def _validate_case(
     python_reference = tool_results.get("python_reference")
     if not python_reference or python_reference.passed is not True:
         failures.append("python_reference non valido.")
+    reference_coverage = tool_results.get("reference_coverage")
+    if not reference_coverage or reference_coverage.passed is not True:
+        failures.append("reference_coverage non valido.")
 
     if require_full_toolchain:
         failures.extend(_validate_required_toolchain(tool_results))

@@ -43,6 +43,88 @@ def processing_element_reference(
     return psum_in, False
 
 
+def _load_tile_operands(
+    prev_activation_regs: List[List[int]],
+    prev_weight_regs: List[List[int]],
+    activations_west: List[int],
+    weights_north: List[int],
+    rows: int,
+    cols: int,
+    preload_en: bool,
+    transpose_inputs: bool,
+) -> Tuple[List[List[int]], List[List[int]]]:
+    next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
+    next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
+
+    if preload_en:
+        for row in range(rows):
+            for col in range(cols):
+                if transpose_inputs:
+                    next_activations[row][col] = (
+                        int(weights_north[row]) if row < len(weights_north) else 0
+                    )
+                    next_weights[row][col] = (
+                        int(activations_west[col]) if col < len(activations_west) else 0
+                    )
+                else:
+                    next_activations[row][col] = (
+                        int(activations_west[row]) if row < len(activations_west) else 0
+                    )
+                    next_weights[row][col] = (
+                        int(weights_north[col]) if col < len(weights_north) else 0
+                    )
+        return next_activations, next_weights
+
+    for row in range(rows):
+        for col in range(cols):
+            if col == 0:
+                next_activations[row][col] = (
+                    int(weights_north[row])
+                    if transpose_inputs and row < len(weights_north)
+                    else int(activations_west[row]) if row < len(activations_west) else 0
+                )
+            else:
+                next_activations[row][col] = prev_activation_regs[row][col - 1]
+
+    for row in range(rows):
+        for col in range(cols):
+            if row == 0:
+                next_weights[row][col] = (
+                    int(activations_west[col])
+                    if transpose_inputs and col < len(activations_west)
+                    else int(weights_north[col]) if col < len(weights_north) else 0
+                )
+            else:
+                next_weights[row][col] = prev_weight_regs[row - 1][col]
+
+    return next_activations, next_weights
+
+
+def _shift_output_stationary_operands(
+    prev_activation_regs: List[List[int]],
+    prev_weight_regs: List[List[int]],
+    rows: int,
+    cols: int,
+) -> Tuple[List[List[int]], List[List[int]]]:
+    next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
+    next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
+
+    for row in range(rows):
+        for col in range(cols - 1, -1, -1):
+            if col == 0:
+                next_activations[row][col] = 0
+            else:
+                next_activations[row][col] = prev_activation_regs[row][col - 1]
+    for row in range(rows - 1, -1, -1):
+        for col in range(cols):
+            if row == 0:
+                next_weights[row][col] = 0
+            else:
+                next_weights[row][col] = prev_weight_regs[row - 1][col]
+
+    return next_activations, next_weights
+
+
 def systolic_tile_reference(
     steps: List[Dict[str, object]],
     rows: int = 2,
@@ -60,6 +142,8 @@ def systolic_tile_reference(
         clear_acc = bool(step["clear_acc"])
         flush_pipeline = bool(step.get("flush_pipeline", 0))
         output_stationary = bool(step.get("output_stationary_i", 0))
+        preload_en = bool(step.get("preload_en_i", 0))
+        transpose_inputs = bool(step.get("transpose_inputs_i", 0))
         activations_west = [int(value) for value in step["activations_west_i"]]
         weights_north = [int(value) for value in step["weights_north_i"]]
 
@@ -67,25 +151,16 @@ def systolic_tile_reference(
             activation_regs = [[0 for _ in range(cols)] for _ in range(rows)]
             weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
         elif load_inputs_en:
-            next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
-            next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
-
-            for row in range(rows):
-                for col in range(cols):
-                    if col == 0:
-                        next_activations[row][col] = activations_west[row]
-                    else:
-                        next_activations[row][col] = activation_regs[row][col - 1]
-
-            for row in range(rows):
-                for col in range(cols):
-                    if row == 0:
-                        next_weights[row][col] = weights_north[col]
-                    else:
-                        next_weights[row][col] = weight_regs[row - 1][col]
-
-            activation_regs = next_activations
-            weight_regs = next_weights
+            activation_regs, weight_regs = _load_tile_operands(
+                prev_activation_regs=activation_regs,
+                prev_weight_regs=weight_regs,
+                activations_west=activations_west,
+                weights_north=weights_north,
+                rows=rows,
+                cols=cols,
+                preload_en=preload_en,
+                transpose_inputs=transpose_inputs,
+            )
 
         if clear_acc:
             psum_regs = [[0 for _ in range(cols)] for _ in range(rows)]
@@ -101,22 +176,12 @@ def systolic_tile_reference(
             psum_regs = next_psums
             valid_regs = next_valids
             if output_stationary and not load_inputs_en:
-                next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
-                next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
-                for row in range(rows):
-                    for col in range(cols - 1, -1, -1):
-                        if col == 0:
-                            next_activations[row][col] = 0
-                        else:
-                            next_activations[row][col] = activation_regs[row][col - 1]
-                for row in range(rows - 1, -1, -1):
-                    for col in range(cols):
-                        if row == 0:
-                            next_weights[row][col] = 0
-                        else:
-                            next_weights[row][col] = weight_regs[row - 1][col]
-                activation_regs = next_activations
-                weight_regs = next_weights
+                activation_regs, weight_regs = _shift_output_stationary_operands(
+                    prev_activation_regs=activation_regs,
+                    prev_weight_regs=weight_regs,
+                    rows=rows,
+                    cols=cols,
+                )
         else:
             valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
 
@@ -266,6 +331,8 @@ def tile_compute_unit_reference(
         clear_acc = bool(step["clear_acc_i"])
         flush_pipeline = bool(step.get("flush_pipeline_i", 0))
         output_stationary = bool(step.get("output_stationary_i", 0))
+        preload_en = bool(step.get("preload_en_i", 0))
+        transpose_inputs = bool(step.get("transpose_inputs_i", 0))
 
         prev_activation_regs = [row[:] for row in activation_regs]
         prev_weight_regs = [row[:] for row in weight_regs]
@@ -279,19 +346,16 @@ def tile_compute_unit_reference(
             next_weight_regs = [[0 for _ in range(cols)] for _ in range(rows)]
             next_valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
         elif scratchpad_vector_valid:
-            for row in range(rows):
-                for col in range(cols - 1, -1, -1):
-                    if col == 0:
-                        next_activation_regs[row][col] = activations_west[row]
-                    else:
-                        next_activation_regs[row][col] = prev_activation_regs[row][col - 1]
-
-            for row in range(rows - 1, -1, -1):
-                for col in range(cols):
-                    if row == 0:
-                        next_weight_regs[row][col] = weights_north[col]
-                    else:
-                        next_weight_regs[row][col] = prev_weight_regs[row - 1][col]
+            next_activation_regs, next_weight_regs = _load_tile_operands(
+                prev_activation_regs=prev_activation_regs,
+                prev_weight_regs=prev_weight_regs,
+                activations_west=activations_west,
+                weights_north=weights_north,
+                rows=rows,
+                cols=cols,
+                preload_en=preload_en,
+                transpose_inputs=transpose_inputs,
+            )
 
         if clear_acc:
             next_psum_regs = [[0 for _ in range(cols)] for _ in range(rows)]
@@ -304,18 +368,12 @@ def tile_compute_unit_reference(
                     )
                     next_valid_regs[row][col] = True
             if output_stationary and not scratchpad_vector_valid:
-                for row in range(rows):
-                    for col in range(cols - 1, -1, -1):
-                        if col == 0:
-                            next_activation_regs[row][col] = 0
-                        else:
-                            next_activation_regs[row][col] = prev_activation_regs[row][col - 1]
-                for row in range(rows - 1, -1, -1):
-                    for col in range(cols):
-                        if row == 0:
-                            next_weight_regs[row][col] = 0
-                        else:
-                            next_weight_regs[row][col] = prev_weight_regs[row - 1][col]
+                next_activation_regs, next_weight_regs = _shift_output_stationary_operands(
+                    prev_activation_regs=prev_activation_regs,
+                    prev_weight_regs=prev_weight_regs,
+                    rows=rows,
+                    cols=cols,
+                )
         else:
             next_valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
 
@@ -690,6 +748,8 @@ def top_npu_context_reference(
                     "flush_pipeline_i": cycle_interconnect_snapshot["tile_flush_pipeline_o"][tile_index],
                     "clear_acc_i": cycle_interconnect_snapshot["tile_clear_acc_o"][tile_index],
                     "output_stationary_i": int(step.get("output_stationary_i", 0)),
+                    "preload_en_i": int(step.get("preload_en_i", 0)),
+                    "transpose_inputs_i": int(step.get("transpose_inputs_i", 0)),
                 }
             )
         tile_snapshots_by_index.append(

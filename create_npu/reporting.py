@@ -295,6 +295,8 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         "store_burst_count_i",
         "clear_on_done_i",
         "output_stationary_i",
+        "preload_en_i",
+        "transpose_inputs_i",
         "store_ready_i",
     ]
     program = {}
@@ -874,6 +876,8 @@ def _build_dataflow_profile(
         "rtl_output_stationary_enabled": int(
             compiled_mapping.get("output_stationary_enabled", compiled_dataflow == "output_stationary")
         ),
+        "rtl_preload_enabled": int(compiled_mapping.get("preload_enabled", 0)),
+        "rtl_transpose_inputs_enabled": int(compiled_mapping.get("transpose_inputs", 0)),
         "tiling_strategy": (compiled_program or {}).get("tiling_strategy"),
     }
 

@@ -186,8 +186,12 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(architecture.family, "output_stationary_array")
         self.assertEqual(program.mapping_plan["dataflow"], "output_stationary")
         self.assertEqual(program.mapping_plan["output_stationary_enabled"], 1)
+        self.assertEqual(program.mapping_plan["preload_enabled"], 1)
+        self.assertEqual(program.mapping_plan["transpose_inputs"], 1)
         self.assertEqual(program.tiling_strategy, "output_stationary_blocking")
         self.assertEqual(vectors["output_stationary_i"], 1)
+        self.assertEqual(vectors["preload_en_i"], 1)
+        self.assertEqual(vectors["transpose_inputs_i"], 1)
 
 
 class ArchitecturePlanningTest(unittest.TestCase):
@@ -1203,6 +1207,8 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(compiled_program["mapping_plan"]["dataflow"], "output_stationary")
             self.assertEqual(compiled_program["mapping_plan"]["output_stationary_enabled"], 1)
+            self.assertEqual(compiled_program["mapping_plan"]["preload_enabled"], 1)
+            self.assertEqual(compiled_program["mapping_plan"]["transpose_inputs"], 1)
             top_npu_rtl = (
                 Path(result.output_dir)
                 / "candidates"
@@ -1218,7 +1224,11 @@ class PipelineTest(unittest.TestCase):
                 / "systolic_tile.sv"
             ).read_text(encoding="utf-8")
             self.assertIn("input  logic output_stationary_i", top_npu_rtl)
+            self.assertIn("input  logic preload_en_i", top_npu_rtl)
+            self.assertIn("input  logic transpose_inputs_i", top_npu_rtl)
             self.assertIn("input  logic output_stationary_i", tile_rtl)
+            self.assertIn("input  logic preload_en_i", tile_rtl)
+            self.assertIn("input  logic transpose_inputs_i", tile_rtl)
 
             report_payload = json.loads(Path(result.report["path"]).read_text(encoding="utf-8"))
             self.assertEqual(
@@ -1229,10 +1239,39 @@ class PipelineTest(unittest.TestCase):
                 report_payload["summary"]["dataflow_profile"]["rtl_output_stationary_enabled"],
                 1,
             )
+            self.assertEqual(
+                report_payload["summary"]["dataflow_profile"]["rtl_preload_enabled"],
+                1,
+            )
+            self.assertEqual(
+                report_payload["summary"]["dataflow_profile"]["rtl_transpose_inputs_enabled"],
+                1,
+            )
             self.assertEqual(report_payload["cases"][0]["program"]["output_stationary_i"], 1)
+            self.assertEqual(report_payload["cases"][0]["program"]["preload_en_i"], 1)
+            self.assertEqual(report_payload["cases"][0]["program"]["transpose_inputs_i"], 1)
             self.assertEqual(
                 report_payload["summary"]["compiled_program"]["tiling_strategy"],
                 "output_stationary_blocking",
+            )
+            verification_vectors = json.loads(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "verification_vectors.json"
+                ).read_text(encoding="utf-8")
+            )
+            systolic_case_names = {
+                case["name"] for case in verification_vectors["systolic_tile"]
+            }
+            tile_case_names = {
+                case["name"] for case in verification_vectors["tile_compute_unit"]
+            }
+            self.assertIn("preload_transpose_output_stationary", systolic_case_names)
+            self.assertIn(
+                "preload_transpose_output_stationary_from_scratchpad",
+                tile_case_names,
             )
 
     def test_pipeline_archives_dataset_samples(self) -> None:

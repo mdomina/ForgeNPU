@@ -119,7 +119,9 @@ def compile_seed_program(
     rationale.append(
         "Dataflow compilato: "
         f"{mapping_plan.get('dataflow', 'systolic')} "
-        f"(output_stationary_i={int(mapping_plan.get('output_stationary_enabled', 0))})."
+        f"(output_stationary_i={int(mapping_plan.get('output_stationary_enabled', 0))}, "
+        f"preload_en_i={int(mapping_plan.get('preload_enabled', 0))}, "
+        f"transpose_inputs_i={int(mapping_plan.get('transpose_inputs', 0))})."
     )
 
     return CompiledProgram(
@@ -175,6 +177,8 @@ def compiled_program_seed_vectors(program: CompiledProgram) -> Dict[str, object]
         "store_burst_count_i": int(program.store_burst_count),
         "clear_on_done_i": 1 if program.clear_on_done else 0,
         "output_stationary_i": int(program.mapping_plan.get("output_stationary_enabled", 0)),
+        "preload_en_i": int(program.mapping_plan.get("preload_enabled", 0)),
+        "transpose_inputs_i": int(program.mapping_plan.get("transpose_inputs", 0)),
     }
 
 
@@ -464,6 +468,11 @@ def _mapping_plan(
     active_tile_count: int,
 ) -> Dict[str, Any]:
     resolved_dataflow = _resolved_mapping_dataflow(spec=spec, architecture=architecture)
+    preload_enabled = int(resolved_dataflow == "output_stationary")
+    transpose_inputs = int(
+        resolved_dataflow == "output_stationary"
+        and spec.workload_type in {"dense_gemm", "transformer"}
+    )
     if spec.workload_type == "transformer":
         return {
             "dataflow": resolved_dataflow,
@@ -474,6 +483,8 @@ def _mapping_plan(
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
             "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
+            "preload_enabled": preload_enabled,
+            "transpose_inputs": transpose_inputs,
         }
     if spec.workload_type == "convolution":
         loop_order = (
@@ -490,6 +501,8 @@ def _mapping_plan(
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
             "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
+            "preload_enabled": preload_enabled,
+            "transpose_inputs": transpose_inputs,
         }
     if spec.workload_type == "sparse_linear_algebra":
         return {
@@ -502,6 +515,8 @@ def _mapping_plan(
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
             "output_stationary_enabled": 0,
+            "preload_enabled": 0,
+            "transpose_inputs": 0,
         }
     return {
         "dataflow": resolved_dataflow,
@@ -512,6 +527,8 @@ def _mapping_plan(
         "active_tile_count": active_tile_count,
         "architecture_family": architecture.family,
         "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
+        "preload_enabled": preload_enabled,
+        "transpose_inputs": transpose_inputs,
     }
 
 

@@ -672,6 +672,12 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(len(verification_vectors["top_npu_stress"]), 3)
             self.assertIn("randomized", verification_vectors["top_npu_stress"][0]["stress_tags"])
+            self.assertEqual(len(verification_vectors["scheduler_stress"]), 1)
+            self.assertEqual(len(verification_vectors["cluster_control_stress"]), 1)
+            self.assertEqual(len(verification_vectors["cluster_interconnect_stress"]), 1)
+            self.assertIn("multi_slot", verification_vectors["scheduler_stress"][0]["stress_tags"])
+            self.assertIn("control_routing", verification_vectors["cluster_control_stress"][0]["stress_tags"])
+            self.assertIn("store_fanout", verification_vectors["cluster_interconnect_stress"][0]["stress_tags"])
 
             payload = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["generated"]["primary_module"], "top_npu")
@@ -877,6 +883,7 @@ class PipelineTest(unittest.TestCase):
             report_payload = json.loads(Path(report["path"]).read_text(encoding="utf-8"))
             self.assertEqual(len(report_payload["cases"]), 4)
             self.assertEqual(len(report_payload["stress_cases"]), 3)
+            self.assertEqual(len(report_payload["internal_stress_cases"]), 3)
             self.assertEqual(report["summary"]["stress_verification"]["stress_case_count"], 3)
             self.assertEqual(report["summary"]["stress_verification"]["backpressure_case_count"], 2)
             self.assertEqual(report["summary"]["stress_verification"]["flush_case_count"], 2)
@@ -889,6 +896,30 @@ class PipelineTest(unittest.TestCase):
             self.assertIn(
                 "flush",
                 report["summary"]["stress_verification"]["covered_tags"],
+            )
+            self.assertEqual(
+                report["summary"]["internal_stress_verification"]["stress_case_count"],
+                3,
+            )
+            self.assertEqual(
+                report["summary"]["internal_stress_verification"]["scheduler_case_count"],
+                1,
+            )
+            self.assertEqual(
+                report["summary"]["internal_stress_verification"]["cluster_control_case_count"],
+                1,
+            )
+            self.assertEqual(
+                report["summary"]["internal_stress_verification"]["cluster_interconnect_case_count"],
+                1,
+            )
+            self.assertEqual(
+                report["summary"]["internal_stress_verification"]["covered_modules"],
+                ["cluster_control", "cluster_interconnect", "scheduler"],
+            )
+            self.assertIn(
+                "scheduler:restart_window_seed41",
+                report["summary"]["internal_stress_verification"]["case_names"],
             )
             self.assertEqual(report_payload["cases"][1]["name"], "single_slot_single_compute_top")
             self.assertEqual(report_payload["cases"][2]["name"], "dual_tile_broadcast_compute_top")

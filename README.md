@@ -34,13 +34,13 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - best-of-N automatico sopra i tre profili seed, con espansione deterministica di varianti quando `--num-candidates` supera i profili base;
 - segnali di learning feedback derivati dall'EDA (`accept/reject`, reward, bucket di feedback e motivi di rejection) pronti per rejection sampling o RL offline;
 - harness locale per lint, simulazione e sintesi con fallback esplicito, inclusa sintesi `yosys` bounded sui parametri dei casi `top_npu` per mantenere trattabile la regressione;
-- verifica Python rinforzata con casi `top_npu_stress` randomizzati in modo deterministico per backpressure, flush e multi-tile;
+- verifica Python rinforzata con casi `top_npu_stress` randomizzati in modo deterministico per backpressure, flush e multi-tile, piu' stress dedicati per `scheduler`, `cluster_control` e `cluster_interconnect`;
 - backend LLM opzionale con chiamata live, output JSON strutturato, override RTL mirati e fallback controllato;
 - compiler seed che traduce workload e requirement in un programma `LOAD/COMPUTE/STORE` esplicito con mapping, shape reali, operator plan e descrittori persistiti;
 - benchmark di regressione arricchito con casi workload-specifici per `transformer`, `convolution`, `sparse_linear_algebra` e fallback LLM, con check espliciti sul `compiled_program`;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.
 
-Il generatore RTL resta seed-based come baseline, ma puo' ora affiancare una variante live LLM con override controllati di `processing_element.sv` e `systolic_tile.sv`, confrontandola automaticamente contro il seed euristico tramite lo scoring corrente. Sopra il seed hardware c'e' ora anche un primo layer di `compiler/mapping` che compila un programma `LOAD/COMPUTE/STORE` dal workload e lo persiste negli artifact e nei report, includendo shape reali per GEMM, convolution, transformer attention e sparse matmul insieme al mapping plan corrispondente. Il benchmark di regressione usa adesso anche casi workload-specifici per verificare che questi `compiled_program` siano coerenti su `transformer`, `convolution`, `sparse_linear_algebra` e sul path di fallback LLM. Il cluster separa in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Le run vengono anche archiviate come dataset locale in `runs/dataset/` o nella root del benchmark corrente, con search summary best-of-N e learning feedback EDA pronti per loop di training offline. Il passo successivo con piu' impatto e' estendere i casi stress ai moduli interni oltre `top_npu` e aggiungere coverage piu' quantitativa.
+Il generatore RTL resta seed-based come baseline, ma puo' ora affiancare una variante live LLM con override controllati di `processing_element.sv` e `systolic_tile.sv`, confrontandola automaticamente contro il seed euristico tramite lo scoring corrente. Sopra il seed hardware c'e' ora anche un primo layer di `compiler/mapping` che compila un programma `LOAD/COMPUTE/STORE` dal workload e lo persiste negli artifact e nei report, includendo shape reali per GEMM, convolution, transformer attention e sparse matmul insieme al mapping plan corrispondente. Il benchmark di regressione usa adesso anche casi workload-specifici per verificare che questi `compiled_program` siano coerenti su `transformer`, `convolution`, `sparse_linear_algebra` e sul path di fallback LLM. La verifica stress non si ferma piu' al solo `top_npu`: i manifest includono anche casi interni per `scheduler`, `cluster_control` e `cluster_interconnect`, con riepilogo dedicato nel report. Il cluster separa in modo esplicito control-path, interconnect e data-path del top-level, con banking, descrittori minimi, burst di writeback, flush della pipeline e backpressure multi-tile instradati dai moduli dedicati; inoltre la shape di default del cluster e il `TILE_COUNT` vengono propagati direttamente dalla tile architetturale reale, senza riduzioni intermedie. Le run vengono anche archiviate come dataset locale in `runs/dataset/` o nella root del benchmark corrente, con search summary best-of-N e learning feedback EDA pronti per loop di training offline. Il passo successivo con piu' impatto e' aggiungere coverage piu' quantitativa sopra il golden model.
 
 ## Quick Start
 
@@ -115,7 +115,7 @@ Ogni run scrive una directory `runs/output_<timestamp>/` con:
 - `candidates/<candidate_id>/rtl/`: seed RTL;
 - `candidates/<candidate_id>/tb/`: testbench;
 - `candidates/<candidate_id>/compiled_program.json`: programma seed compilato dal layer di mapping con shape workload, operator plan, slot, iterazioni, burst e descrittori;
-- `candidates/<candidate_id>/verification_vectors.json`: casi per il golden model Python, inclusi stress case `top_npu_stress` deterministici;
+- `candidates/<candidate_id>/verification_vectors.json`: casi per il golden model Python, inclusi stress case deterministici per `top_npu` e moduli interni;
 - `candidates/<candidate_id>/execution_report.json`: trace degli stati del `scheduler`, metriche memoria/compute e stima di throughput del `top_npu`;
 - `candidates/<candidate_id>/logs/`: log dei tool e del reference check;
 - `candidates/<candidate_id>/llm_request.json`: richiesta completa al backend LLM con prompt, schema e moduli seed;
@@ -183,5 +183,5 @@ Comportamento:
 ## Prossimi passi consigliati
 
 1. Evolvere lo scoring verso confronto multi-obiettivo e frontiera di Pareto su throughput, potenza e area.
-2. Portare i casi stress anche su moduli interni oltre `top_npu`, non solo nel golden model Python.
-3. Integrare coverage e check piu' quantitativi oltre il golden model attuale.
+2. Integrare coverage e check piu' quantitativi oltre il golden model attuale.
+3. Espandere il dataset per includere metriche aggregate di coverage e failure modes, non solo score/run artifact.

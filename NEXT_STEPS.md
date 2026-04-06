@@ -89,7 +89,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 ## Verifica e Stress
 
 - [x] Rafforzare la verifica con casi randomizzati e stress test su backpressure, flush e multi-tile.
-- [ ] Estendere i casi stress ai moduli interni oltre `top_npu`.
+- [x] Estendere i casi stress ai moduli interni oltre `top_npu`.
 - [ ] Integrare coverage o check piu' quantitativi oltre l'attuale golden model.
 
 ## Dataset e Learning Loop

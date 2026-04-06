@@ -58,6 +58,7 @@ def _build_execution_report(
     payload = json.loads(Path(bundle.reference_cases_path).read_text(encoding="utf-8"))
     top_level_cases = payload.get("top_npu", [])
     top_level_stress_cases = payload.get("top_npu_stress", [])
+    internal_stress_cases = _build_internal_stress_cases(payload)
     if not top_level_cases:
         return {
             "available": False,
@@ -85,6 +86,9 @@ def _build_execution_report(
     )
     summary["compiled_program"] = payload.get("compiled_program", {})
     summary["stress_verification"] = _build_stress_verification_summary(top_level_stress_cases)
+    summary["internal_stress_verification"] = _build_internal_stress_verification_summary(
+        internal_stress_cases
+    )
     summary["requirement_profile"] = _build_requirement_profile(spec=spec, architecture=architecture)
     summary["workload_profile"] = _build_workload_profile(spec=spec, architecture=architecture)
 
@@ -105,6 +109,7 @@ def _build_execution_report(
             }
             for case in top_level_stress_cases
         ],
+        "internal_stress_cases": internal_stress_cases,
     }
 
 
@@ -416,6 +421,17 @@ def _empty_summary() -> Dict[str, Any]:
             "max_stress_tile_count": 0,
             "case_names": [],
         },
+        "internal_stress_verification": {
+            "stress_case_count": 0,
+            "stress_cycle_count": 0,
+            "covered_modules": [],
+            "covered_tags": [],
+            "max_stress_tile_count": 0,
+            "case_names": [],
+            "scheduler_case_count": 0,
+            "cluster_control_case_count": 0,
+            "cluster_interconnect_case_count": 0,
+        },
         "requirement_profile": None,
         "workload_profile": None,
     }
@@ -721,6 +737,57 @@ def _build_stress_verification_summary(stress_cases: List[Dict[str, Any]]) -> Di
             [int(case.get("tile_count", 1)) for case in stress_cases] or [0]
         ),
         "case_names": [str(case.get("name", "")) for case in stress_cases],
+    }
+
+
+def _build_internal_stress_cases(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    cases: List[Dict[str, Any]] = []
+    for module_name, section_name in (
+        ("scheduler", "scheduler_stress"),
+        ("cluster_control", "cluster_control_stress"),
+        ("cluster_interconnect", "cluster_interconnect_stress"),
+    ):
+        for case in payload.get(section_name, []):
+            cases.append(
+                {
+                    "module": module_name,
+                    "name": str(case.get("name", "")),
+                    "random_seed": int(case.get("random_seed", 0)),
+                    "tile_count": int(case.get("tile_count", 1)),
+                    "step_count": len(case.get("steps", [])),
+                    "stress_tags": [str(tag) for tag in case.get("stress_tags", [])],
+                }
+            )
+    return cases
+
+
+def _build_internal_stress_verification_summary(
+    stress_cases: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    covered_tags = sorted(
+        {
+            str(tag)
+            for case in stress_cases
+            for tag in case.get("stress_tags", [])
+        }
+    )
+    covered_modules = sorted({str(case.get("module", "")) for case in stress_cases if case.get("module")})
+    return {
+        "stress_case_count": len(stress_cases),
+        "stress_cycle_count": sum(int(case.get("step_count", 0)) for case in stress_cases),
+        "covered_modules": covered_modules,
+        "covered_tags": covered_tags,
+        "max_stress_tile_count": max([int(case.get("tile_count", 1)) for case in stress_cases] or [0]),
+        "case_names": [
+            f"{case.get('module', 'module')}:{case.get('name', '')}" for case in stress_cases
+        ],
+        "scheduler_case_count": sum(1 for case in stress_cases if case.get("module") == "scheduler"),
+        "cluster_control_case_count": sum(
+            1 for case in stress_cases if case.get("module") == "cluster_control"
+        ),
+        "cluster_interconnect_case_count": sum(
+            1 for case in stress_cases if case.get("module") == "cluster_interconnect"
+        ),
     }
 
 

@@ -3843,6 +3843,283 @@ def _cluster_interconnect_sequence_case() -> Dict[str, object]:
     }
 
 
+def _scheduler_stress_cases(compiled_program: Optional[Dict[str, object]] = None) -> List[Dict[str, object]]:
+    return [
+        _scheduler_randomized_stress_case(
+            case_name="restart_window_seed41",
+            random_seed=41,
+            compiled_program=compiled_program,
+        )
+    ]
+
+
+def _scheduler_randomized_stress_case(
+    case_name: str,
+    random_seed: int,
+    compiled_program: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    rng = random.Random(random_seed)
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
+    vectors["slot_count_i"] = 2
+    vectors["load_iterations_i"] = 2 + rng.randint(0, 1)
+    vectors["compute_iterations_i"] = 4 + rng.randint(0, 1)
+    vectors["store_burst_count_i"] = 2
+    vectors["clear_on_done_i"] = 1
+    start_cycles = {0, 18}
+    steps = []
+    for cycle in range(28):
+        payload = dict(vectors)
+        payload["start_i"] = 1 if cycle in start_cycles else 0
+        steps.append(payload)
+    for payload, expected in zip(steps, scheduler_reference(steps=steps)):
+        payload["expected"] = expected
+    return {
+        "name": case_name,
+        "rows": 2,
+        "cols": 2,
+        "depth": 4,
+        "random_seed": random_seed,
+        "stress_tags": ["randomized", "restart", "long_compute", "multi_slot"],
+        "steps": steps,
+    }
+
+
+def _cluster_control_stress_cases(
+    compiled_program: Optional[Dict[str, object]] = None,
+) -> List[Dict[str, object]]:
+    return [
+        _cluster_control_randomized_stress_case(
+            case_name="three_tile_mask_churn_seed43",
+            random_seed=43,
+            compiled_program=compiled_program,
+        )
+    ]
+
+
+def _cluster_control_randomized_stress_case(
+    case_name: str,
+    random_seed: int,
+    compiled_program: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    rng = random.Random(random_seed)
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
+    vectors["slot_count_i"] = 2
+    vectors["load_iterations_i"] = 2
+    vectors["compute_iterations_i"] = 3
+    vectors["store_burst_count_i"] = 2
+    vectors["clear_on_done_i"] = 1
+    tile_count = 3
+    steps = []
+    for cycle in range(14):
+        tile_mask = [1 if rng.random() >= 0.35 else 0 for _ in range(tile_count)]
+        if not any(tile_mask):
+            tile_mask[cycle % tile_count] = 1
+        payload = dict(vectors)
+        payload["start_i"] = 1 if cycle == 0 else 0
+        payload["tile_enable_i"] = tile_mask
+        steps.append(payload)
+    for payload, expected in zip(
+        steps,
+        cluster_control_reference(steps=steps, rows=2, cols=2, tile_count=tile_count),
+    ):
+        payload["expected"] = expected
+    return {
+        "name": case_name,
+        "tile_count": tile_count,
+        "rows": 2,
+        "cols": 2,
+        "depth": 4,
+        "random_seed": random_seed,
+        "stress_tags": ["randomized", "mask_churn", "multi_tile", "control_routing"],
+        "steps": steps,
+    }
+
+
+def _cluster_interconnect_stress_cases() -> List[Dict[str, object]]:
+    return [
+        _cluster_interconnect_randomized_stress_case(
+            case_name="triple_tile_backpressure_seed47",
+            random_seed=47,
+        )
+    ]
+
+
+def _cluster_interconnect_randomized_stress_case(
+    case_name: str,
+    random_seed: int,
+) -> Dict[str, object]:
+    rng = random.Random(random_seed)
+    tile_count = 3
+    rows = 2
+    cols = 2
+    psum_vector_length = rows * cols * tile_count
+
+    def random_mask() -> List[int]:
+        mask = [1 if rng.random() >= 0.4 else 0 for _ in range(tile_count)]
+        if not any(mask):
+            mask[rng.randrange(tile_count)] = 1
+        return mask
+
+    def random_psums() -> List[int]:
+        return [rng.randint(4, 96) for _ in range(psum_vector_length)]
+
+    steps = [
+        {
+            "dma_payload_i": [0, 0],
+            "tile_dma_valid_i": [0, 0, 0],
+            "tile_dma_ready_i": [1, 1, 1],
+            "dma_write_weights_i": 0,
+            "dma_bank_select_i": 0,
+            "dma_local_addr_i": 0,
+            "tile_load_vector_en_i": [0, 0, 0],
+            "tile_load_ready_i": [1, 1, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 0,
+            "weight_read_bank_select_i": 0,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [0, 0, 0],
+            "tile_flush_pipeline_i": [0, 0, 0],
+            "tile_clear_acc_i": [0, 0, 0],
+            "tile_store_results_en_i": [0, 0, 0],
+            "store_results_en_i": 0,
+            "store_ready_i": 1,
+            "result_write_addr_i": 0,
+            "store_burst_index_i": 0,
+            "tile_psums_i": [0 for _ in range(psum_vector_length)],
+        },
+        {
+            "dma_payload_i": [rng.randint(1, 4), rng.randint(5, 8)],
+            "tile_dma_valid_i": random_mask(),
+            "tile_dma_ready_i": [1, 0, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 1,
+            "tile_load_vector_en_i": [0, 0, 0],
+            "tile_load_ready_i": [1, 1, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 1,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": random_mask(),
+            "tile_flush_pipeline_i": [0, 0, 0],
+            "tile_clear_acc_i": random_mask(),
+            "tile_store_results_en_i": [0, 0, 0],
+            "store_results_en_i": 0,
+            "store_ready_i": 1,
+            "result_write_addr_i": 1,
+            "store_burst_index_i": 0,
+            "tile_psums_i": random_psums(),
+        },
+        {
+            "dma_payload_i": [rng.randint(2, 6), rng.randint(3, 7)],
+            "tile_dma_valid_i": [1, 1, 1],
+            "tile_dma_ready_i": [1, 1, 1],
+            "dma_write_weights_i": 0,
+            "dma_bank_select_i": 0,
+            "dma_local_addr_i": 2,
+            "tile_load_vector_en_i": [1, 1, 1],
+            "tile_load_ready_i": [1, 0, 1],
+            "activation_read_bank_select_i": 1,
+            "activation_local_read_addr_i": 2,
+            "weight_read_bank_select_i": 0,
+            "weight_local_read_addr_i": 1,
+            "tile_compute_en_i": random_mask(),
+            "tile_flush_pipeline_i": [0, 1, 0],
+            "tile_clear_acc_i": [0, 0, 0],
+            "tile_store_results_en_i": [0, 0, 0],
+            "store_results_en_i": 0,
+            "store_ready_i": 1,
+            "result_write_addr_i": 2,
+            "store_burst_index_i": 0,
+            "tile_psums_i": random_psums(),
+        },
+        {
+            "dma_payload_i": [rng.randint(1, 5), rng.randint(6, 9)],
+            "tile_dma_valid_i": [1, 1, 0],
+            "tile_dma_ready_i": [1, 1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 3,
+            "tile_load_vector_en_i": [1, 1, 1],
+            "tile_load_ready_i": [1, 1, 1],
+            "activation_read_bank_select_i": 1,
+            "activation_local_read_addr_i": 0,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 2,
+            "tile_compute_en_i": [1, 1, 1],
+            "tile_flush_pipeline_i": [0, 0, 1],
+            "tile_clear_acc_i": [0, 1, 0],
+            "tile_store_results_en_i": [1, 1, 1],
+            "store_results_en_i": 1,
+            "store_ready_i": 0,
+            "result_write_addr_i": 4,
+            "store_burst_index_i": 0,
+            "tile_psums_i": random_psums(),
+        },
+        {
+            "dma_payload_i": [rng.randint(1, 5), rng.randint(6, 9)],
+            "tile_dma_valid_i": [1, 0, 1],
+            "tile_dma_ready_i": [1, 1, 1],
+            "dma_write_weights_i": 1,
+            "dma_bank_select_i": 1,
+            "dma_local_addr_i": 3,
+            "tile_load_vector_en_i": [1, 0, 1],
+            "tile_load_ready_i": [1, 1, 1],
+            "activation_read_bank_select_i": 1,
+            "activation_local_read_addr_i": 0,
+            "weight_read_bank_select_i": 1,
+            "weight_local_read_addr_i": 2,
+            "tile_compute_en_i": [1, 1, 1],
+            "tile_flush_pipeline_i": [1, 1, 1],
+            "tile_clear_acc_i": [0, 0, 0],
+            "tile_store_results_en_i": [1, 1, 1],
+            "store_results_en_i": 1,
+            "store_ready_i": 1,
+            "result_write_addr_i": 5,
+            "store_burst_index_i": 1,
+            "tile_psums_i": random_psums(),
+        },
+        {
+            "dma_payload_i": [0, 0],
+            "tile_dma_valid_i": [0, 0, 0],
+            "tile_dma_ready_i": [1, 1, 1],
+            "dma_write_weights_i": 0,
+            "dma_bank_select_i": 0,
+            "dma_local_addr_i": 0,
+            "tile_load_vector_en_i": [0, 0, 0],
+            "tile_load_ready_i": [1, 1, 1],
+            "activation_read_bank_select_i": 0,
+            "activation_local_read_addr_i": 0,
+            "weight_read_bank_select_i": 0,
+            "weight_local_read_addr_i": 0,
+            "tile_compute_en_i": [0, 1, 1],
+            "tile_flush_pipeline_i": [0, 1, 1],
+            "tile_clear_acc_i": [1, 0, 1],
+            "tile_store_results_en_i": [0, 0, 0],
+            "store_results_en_i": 0,
+            "store_ready_i": 1,
+            "result_write_addr_i": 0,
+            "store_burst_index_i": 0,
+            "tile_psums_i": random_psums(),
+        },
+    ]
+    for payload, expected in zip(
+        steps,
+        cluster_interconnect_reference(steps=steps, rows=rows, cols=cols, tile_count=tile_count),
+    ):
+        payload["expected"] = expected
+    return {
+        "name": case_name,
+        "tile_count": tile_count,
+        "rows": rows,
+        "cols": cols,
+        "depth": 4,
+        "random_seed": random_seed,
+        "stress_tags": ["randomized", "backpressure", "multi_tile", "store_fanout"],
+        "steps": steps,
+    }
+
+
 def _top_npu_sequence_case(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     vectors = _program_seed_vectors(compiled_program=compiled_program)
     starts = [1] + [0 for _ in range(13)]
@@ -4716,8 +4993,11 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
             _scheduler_sequence_case(compiled_program=compiled_program),
             _scheduler_short_sequence_case(compiled_program=compiled_program),
         ],
+        "scheduler_stress": _scheduler_stress_cases(compiled_program=compiled_program),
         "cluster_control": [_cluster_control_sequence_case(compiled_program=compiled_program)],
+        "cluster_control_stress": _cluster_control_stress_cases(compiled_program=compiled_program),
         "cluster_interconnect": [_cluster_interconnect_sequence_case()],
+        "cluster_interconnect_stress": _cluster_interconnect_stress_cases(),
         "top_npu": [
             _top_npu_sequence_case(compiled_program=compiled_program),
             _top_npu_short_sequence_case(compiled_program=compiled_program),

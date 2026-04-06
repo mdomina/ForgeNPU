@@ -805,7 +805,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['dma_done_o']})"
                 )
 
-    for case in payload.get("scheduler", []):
+    for case in list(payload.get("scheduler", [])) + list(payload.get("scheduler_stress", [])):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
         observed_snapshots = scheduler_reference(
@@ -855,7 +855,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['clear_acc_o']})"
                 )
 
-    for case in payload.get("cluster_control", []):
+    for case in list(payload.get("cluster_control", [])) + list(payload.get("cluster_control_stress", [])):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
         tile_count = int(case.get("tile_count", 1))
@@ -916,7 +916,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['store_burst_index_o']})"
                 )
 
-    for case in payload.get("cluster_interconnect", []):
+    for case in list(payload.get("cluster_interconnect", [])) + list(payload.get("cluster_interconnect_stress", [])):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
         tile_count = int(case.get("tile_count", 1))
@@ -1071,8 +1071,11 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
         + sum(len(case["steps"]) for case in payload.get("dma_engine", []))
         + sum(len(case["steps"]) for case in payload.get("scratchpad_controller", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler", []))
+        + sum(len(case["steps"]) for case in payload.get("scheduler_stress", []))
         + sum(len(case["steps"]) for case in payload.get("cluster_control", []))
+        + sum(len(case["steps"]) for case in payload.get("cluster_control_stress", []))
         + sum(len(case["steps"]) for case in payload.get("cluster_interconnect", []))
+        + sum(len(case["steps"]) for case in payload.get("cluster_interconnect_stress", []))
         + sum(len(case["steps"]) for case in payload.get("tile_compute_unit", []))
         + sum(len(case["steps"]) for case in payload.get("top_npu", []))
         + sum(len(case["steps"]) for case in payload.get("top_npu_stress", []))

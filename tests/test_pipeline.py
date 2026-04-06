@@ -193,6 +193,123 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(vectors["preload_en_i"], 1)
         self.assertEqual(vectors["transpose_inputs_i"], 1)
 
+    def test_compile_tiled_loop_nest_for_gemm(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM batch 1-8.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            batch_min=1,
+            batch_max=8,
+            target_frequency_mhz=1000.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        nest = program.tiled_loop_nest
+        self.assertEqual(nest["op_type"], "gemm")
+        self.assertTrue(nest["double_buffering_enabled"])
+        self.assertEqual(nest["prefetch_distance"], 1)
+        self.assertGreaterEqual(nest["activation_tiles_in_flight"], 2)
+        self.assertGreaterEqual(nest["weight_tiles_in_flight"], 2)
+        self.assertGreater(nest["total_tile_iterations"], 0)
+        self.assertGreater(nest["estimated_compute_cycles"], 0)
+        self.assertGreater(nest["estimated_memory_cycles"], 0)
+        self.assertGreater(nest["estimated_overlap_cycles"], 0)
+        self.assertGreater(nest["cluster_occupancy_percent"], 0)
+
+        loops = nest["loops"]
+        self.assertGreaterEqual(len(loops), 4)
+        dim_names = [loop["dim"] for loop in loops]
+        self.assertIn("batch", dim_names)
+        self.assertIn("m", dim_names)
+        self.assertIn("n", dim_names)
+        self.assertIn("k", dim_names)
+        for loop in loops:
+            self.assertGreater(loop["full_size"], 0)
+            self.assertGreater(loop["tile_size"], 0)
+            self.assertGreater(loop["iterations"], 0)
+
+    def test_compile_tiled_loop_nest_for_convolution(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 8 TOPS convolution kernel 3x3 batch 1-4.",
+            numeric_precision="INT8",
+            throughput_value=8.0,
+            throughput_unit="TOPS",
+            workload_type="convolution",
+            kernel_size=3,
+            batch_min=1,
+            batch_max=4,
+            target_frequency_mhz=900.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        nest = program.tiled_loop_nest
+        self.assertEqual(nest["op_type"], "conv2d")
+        self.assertTrue(nest["double_buffering_enabled"])
+        self.assertEqual(nest["prefetch_distance"], 1)
+        self.assertGreater(nest["total_tile_iterations"], 0)
+        self.assertGreater(nest["estimated_overlap_cycles"], 0)
+
+        loops = nest["loops"]
+        self.assertGreaterEqual(len(loops), 5)
+        dim_names = [loop["dim"] for loop in loops]
+        self.assertIn("batch", dim_names)
+        self.assertIn("spatial", dim_names)
+        self.assertIn("oc", dim_names)
+        self.assertIn("ic", dim_names)
+        self.assertIn("kernel", dim_names)
+        kernel_loop = next(l for l in loops if l["dim"] == "kernel")
+        self.assertEqual(kernel_loop["full_size"], 9)
+        self.assertEqual(kernel_loop["iterations"], 9)
+
+    def test_compile_cluster_occupancy(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM batch 1-8.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            batch_min=1,
+            batch_max=8,
+            target_frequency_mhz=1000.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        occ = program.cluster_occupancy
+        self.assertGreater(occ["total_pe"], 0)
+        self.assertGreater(occ["active_pe"], 0)
+        self.assertGreater(occ["spatial_utilization_percent"], 0)
+        self.assertGreater(occ["compute_bound_occupancy_percent"], 0)
+        self.assertTrue(occ["double_buffering_enabled"])
+        self.assertGreater(occ["estimated_compute_cycles"], 0)
+        self.assertGreater(occ["estimated_overlap_cycles"], 0)
+        self.assertGreater(occ["effective_cycles"], 0)
+        self.assertGreater(occ["memory_compute_ratio"], 0)
+
+    def test_compile_sparse_has_tiled_loop_nest(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS sparse.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="sparse_linear_algebra",
+            target_frequency_mhz=900.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        nest = program.tiled_loop_nest
+        self.assertEqual(nest["op_type"], "gemm")
+        self.assertFalse(nest["double_buffering_enabled"])
+        self.assertEqual(nest["prefetch_distance"], 0)
+        self.assertEqual(nest["activation_tiles_in_flight"], 1)
+        self.assertGreater(nest["total_tile_iterations"], 0)
+        self.assertEqual(nest["estimated_overlap_cycles"], 0)
+
 
 class ArchitecturePlanningTest(unittest.TestCase):
     def test_plan_architecture_respects_memory_and_bandwidth_hints(self) -> None:

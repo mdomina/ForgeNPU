@@ -7,6 +7,38 @@ from create_npu.workloads import resolve_dataflow_for_family
 
 
 @dataclass
+class TiledLoop:
+    """A single dimension in a tiled loop nest for gemm or convolution."""
+
+    dim: str
+    full_size: int
+    tile_size: int
+    iterations: int
+    buffer_slot: str  # "A" for activation/input, "B" for weight, "C" for output
+
+
+@dataclass
+class TiledLoopNest:
+    """Complete tiled loop nest with double-buffering and occupancy estimates."""
+
+    op_type: str  # "gemm" or "conv2d"
+    loops: List[TiledLoop]
+    double_buffering_enabled: bool
+    prefetch_distance: int  # 0 = no prefetch, 1 = one tile ahead
+    activation_tiles_in_flight: int
+    weight_tiles_in_flight: int
+    output_tiles_in_flight: int
+    total_tile_iterations: int
+    estimated_compute_cycles: int
+    estimated_memory_cycles: int
+    estimated_overlap_cycles: int
+    cluster_occupancy_percent: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class CompiledProgram:
     name: str
     workload_type: str
@@ -36,6 +68,8 @@ class CompiledProgram:
     problem_shape: Dict[str, Any] = field(default_factory=dict)
     operator_descriptors: List[Dict[str, Any]] = field(default_factory=list)
     mapping_plan: Dict[str, Any] = field(default_factory=dict)
+    tiled_loop_nest: Dict[str, Any] = field(default_factory=dict)
+    cluster_occupancy: Dict[str, Any] = field(default_factory=dict)
     rationale: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -90,6 +124,23 @@ def compile_seed_program(
     estimated_result_bytes = store_burst_count * tile_rows * 4
     estimated_mac_operations = sum(int(operator.get("macs", 0)) for operator in operator_descriptors)
 
+    tiled_nest = _build_tiled_loop_nest(
+        spec=spec,
+        problem_shape=problem_shape,
+        tile_rows=tile_rows,
+        tile_cols=tile_cols,
+        active_tile_count=active_tile_count,
+        slot_count=slot_count,
+        compute_iterations=compute_iterations,
+    )
+    cluster_occupancy = _build_cluster_occupancy(
+        tiled_nest=tiled_nest,
+        tile_rows=tile_rows,
+        tile_cols=tile_cols,
+        active_tile_count=active_tile_count,
+        tile_count=tile_count,
+    )
+
     rationale = [
         f"Programma seed compilato per workload `{spec.workload_type}` con strategia `{tiling_strategy}`.",
         f"Slot DMA/load: {slot_count}, iterazioni load: {load_iterations}, iterazioni compute: {compute_iterations}.",
@@ -116,6 +167,11 @@ def compile_seed_program(
         rationale.append(f"Batch massimo {spec.batch_max} usato per aumentare parallelismo e burst di store.")
     if not clear_on_done:
         rationale.append("`clear_on_done` disabilitato per preservare stato tra iterazioni stile training.")
+    rationale.append(
+        f"Tiled loop nest: {tiled_nest.op_type} con {tiled_nest.total_tile_iterations} iterazioni totali, "
+        f"double buffering={'si' if tiled_nest.double_buffering_enabled else 'no'}, "
+        f"occupancy cluster={tiled_nest.cluster_occupancy_percent}%."
+    )
     rationale.append(
         "Dataflow compilato: "
         f"{mapping_plan.get('dataflow', 'systolic')} "
@@ -153,6 +209,8 @@ def compile_seed_program(
         problem_shape=problem_shape,
         operator_descriptors=operator_descriptors,
         mapping_plan=mapping_plan,
+        tiled_loop_nest=tiled_nest.to_dict(),
+        cluster_occupancy=cluster_occupancy,
         rationale=rationale,
     )
 
@@ -179,6 +237,196 @@ def compiled_program_seed_vectors(program: CompiledProgram) -> Dict[str, object]
         "output_stationary_i": int(program.mapping_plan.get("output_stationary_enabled", 0)),
         "preload_en_i": int(program.mapping_plan.get("preload_enabled", 0)),
         "transpose_inputs_i": int(program.mapping_plan.get("transpose_inputs", 0)),
+    }
+
+
+def _build_tiled_loop_nest(
+    spec: RequirementSpec,
+    problem_shape: Dict[str, int],
+    tile_rows: int,
+    tile_cols: int,
+    active_tile_count: int,
+    slot_count: int,
+    compute_iterations: int,
+) -> TiledLoopNest:
+    """Build a tiled loop nest for gemm or convolution with double-buffering."""
+    if spec.workload_type == "convolution":
+        return _build_conv_tiled_loops(
+            problem_shape=problem_shape,
+            tile_rows=tile_rows,
+            tile_cols=tile_cols,
+            active_tile_count=active_tile_count,
+            slot_count=slot_count,
+            compute_iterations=compute_iterations,
+        )
+    return _build_gemm_tiled_loops(
+        problem_shape=problem_shape,
+        tile_rows=tile_rows,
+        tile_cols=tile_cols,
+        active_tile_count=active_tile_count,
+        slot_count=slot_count,
+        compute_iterations=compute_iterations,
+    )
+
+
+def _build_gemm_tiled_loops(
+    problem_shape: Dict[str, int],
+    tile_rows: int,
+    tile_cols: int,
+    active_tile_count: int,
+    slot_count: int,
+    compute_iterations: int,
+) -> TiledLoopNest:
+    m = int(problem_shape.get("m", tile_rows))
+    k = int(problem_shape.get("k", tile_cols))
+    n = int(problem_shape.get("n", tile_cols))
+    batch = int(problem_shape.get("batch", 1))
+
+    m_tile = tile_rows
+    k_tile = tile_cols
+    n_tile = tile_cols * max(1, active_tile_count)
+
+    m_iters = max(1, math.ceil(m / m_tile))
+    k_iters = max(1, math.ceil(k / k_tile))
+    n_iters = max(1, math.ceil(n / n_tile))
+
+    loops = [
+        TiledLoop(dim="batch", full_size=batch, tile_size=1, iterations=batch, buffer_slot="A"),
+        TiledLoop(dim="m", full_size=m, tile_size=m_tile, iterations=m_iters, buffer_slot="C"),
+        TiledLoop(dim="n", full_size=n, tile_size=n_tile, iterations=n_iters, buffer_slot="C"),
+        TiledLoop(dim="k", full_size=k, tile_size=k_tile, iterations=k_iters, buffer_slot="A"),
+    ]
+
+    total_tile_iterations = batch * m_iters * n_iters * k_iters
+    double_buffering = slot_count >= 2
+    prefetch_distance = 1 if double_buffering else 0
+
+    act_in_flight = 2 if double_buffering else 1
+    wgt_in_flight = 2 if double_buffering else 1
+    out_in_flight = 1
+
+    compute_cycles = total_tile_iterations * m_tile * k_tile * compute_iterations
+    memory_cycles = total_tile_iterations * (m_tile + k_tile + n_tile)
+    overlap = min(memory_cycles, compute_cycles) if double_buffering else 0
+    effective_cycles = max(1, compute_cycles + memory_cycles - overlap)
+
+    peak_pe_active = m_tile * min(n_tile, tile_cols)
+    total_pe = tile_rows * tile_cols * max(1, active_tile_count)
+    occupancy = min(100.0, 100.0 * peak_pe_active * active_tile_count / max(1, total_pe))
+    occupancy = round(occupancy * compute_cycles / max(1, effective_cycles), 1)
+
+    return TiledLoopNest(
+        op_type="gemm",
+        loops=loops,
+        double_buffering_enabled=double_buffering,
+        prefetch_distance=prefetch_distance,
+        activation_tiles_in_flight=act_in_flight,
+        weight_tiles_in_flight=wgt_in_flight,
+        output_tiles_in_flight=out_in_flight,
+        total_tile_iterations=total_tile_iterations,
+        estimated_compute_cycles=compute_cycles,
+        estimated_memory_cycles=memory_cycles,
+        estimated_overlap_cycles=overlap,
+        cluster_occupancy_percent=occupancy,
+    )
+
+
+def _build_conv_tiled_loops(
+    problem_shape: Dict[str, int],
+    tile_rows: int,
+    tile_cols: int,
+    active_tile_count: int,
+    slot_count: int,
+    compute_iterations: int,
+) -> TiledLoopNest:
+    batch = int(problem_shape.get("batch", 1))
+    oh = int(problem_shape.get("output_height", 1))
+    ow = int(problem_shape.get("output_width", 1))
+    ic = int(problem_shape.get("input_channels", tile_cols))
+    oc = int(problem_shape.get("output_channels", tile_cols))
+    kh = int(problem_shape.get("kernel_height", 3))
+    kw = int(problem_shape.get("kernel_width", 3))
+
+    spatial_tile = tile_rows
+    oc_tile = tile_cols * max(1, active_tile_count)
+    ic_tile = tile_cols
+
+    spatial_total = oh * ow
+    spatial_iters = max(1, math.ceil(spatial_total / spatial_tile))
+    oc_iters = max(1, math.ceil(oc / oc_tile))
+    ic_iters = max(1, math.ceil(ic / ic_tile))
+    kernel_iters = kh * kw
+
+    loops = [
+        TiledLoop(dim="batch", full_size=batch, tile_size=1, iterations=batch, buffer_slot="A"),
+        TiledLoop(dim="spatial", full_size=spatial_total, tile_size=spatial_tile, iterations=spatial_iters, buffer_slot="C"),
+        TiledLoop(dim="oc", full_size=oc, tile_size=oc_tile, iterations=oc_iters, buffer_slot="C"),
+        TiledLoop(dim="ic", full_size=ic, tile_size=ic_tile, iterations=ic_iters, buffer_slot="A"),
+        TiledLoop(dim="kernel", full_size=kh * kw, tile_size=1, iterations=kernel_iters, buffer_slot="B"),
+    ]
+
+    total_tile_iterations = batch * spatial_iters * oc_iters * ic_iters * kernel_iters
+    double_buffering = slot_count >= 2
+    prefetch_distance = 1 if double_buffering else 0
+
+    act_in_flight = 2 if double_buffering else 1
+    wgt_in_flight = 2 if double_buffering else 1
+    out_in_flight = 1
+
+    compute_cycles = total_tile_iterations * spatial_tile * ic_tile * compute_iterations
+    memory_cycles = total_tile_iterations * (spatial_tile + ic_tile + oc_tile)
+    overlap = min(memory_cycles, compute_cycles) if double_buffering else 0
+    effective_cycles = max(1, compute_cycles + memory_cycles - overlap)
+
+    peak_pe_active = spatial_tile * min(oc_tile, tile_cols)
+    total_pe = tile_rows * tile_cols * max(1, active_tile_count)
+    occupancy = min(100.0, 100.0 * peak_pe_active * active_tile_count / max(1, total_pe))
+    occupancy = round(occupancy * compute_cycles / max(1, effective_cycles), 1)
+
+    return TiledLoopNest(
+        op_type="conv2d",
+        loops=loops,
+        double_buffering_enabled=double_buffering,
+        prefetch_distance=prefetch_distance,
+        activation_tiles_in_flight=act_in_flight,
+        weight_tiles_in_flight=wgt_in_flight,
+        output_tiles_in_flight=out_in_flight,
+        total_tile_iterations=total_tile_iterations,
+        estimated_compute_cycles=compute_cycles,
+        estimated_memory_cycles=memory_cycles,
+        estimated_overlap_cycles=overlap,
+        cluster_occupancy_percent=occupancy,
+    )
+
+
+def _build_cluster_occupancy(
+    tiled_nest: TiledLoopNest,
+    tile_rows: int,
+    tile_cols: int,
+    active_tile_count: int,
+    tile_count: int,
+) -> Dict[str, Any]:
+    total_pe = tile_rows * tile_cols * max(1, tile_count)
+    active_pe = tile_rows * tile_cols * max(1, active_tile_count)
+    spatial_utilization = round(100.0 * active_pe / max(1, total_pe), 1)
+    return {
+        "total_pe": total_pe,
+        "active_pe": active_pe,
+        "spatial_utilization_percent": spatial_utilization,
+        "compute_bound_occupancy_percent": tiled_nest.cluster_occupancy_percent,
+        "double_buffering_enabled": tiled_nest.double_buffering_enabled,
+        "estimated_compute_cycles": tiled_nest.estimated_compute_cycles,
+        "estimated_memory_cycles": tiled_nest.estimated_memory_cycles,
+        "estimated_overlap_cycles": tiled_nest.estimated_overlap_cycles,
+        "effective_cycles": max(
+            1,
+            tiled_nest.estimated_compute_cycles
+            + tiled_nest.estimated_memory_cycles
+            - tiled_nest.estimated_overlap_cycles,
+        ),
+        "memory_compute_ratio": round(
+            tiled_nest.estimated_memory_cycles / max(1, tiled_nest.estimated_compute_cycles), 3
+        ),
     }
 
 

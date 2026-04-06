@@ -97,7 +97,7 @@ Nota:
 - [x] Estendere `tile_compute_unit` e `systolic_tile` con una selezione reale del dataflow `weight_stationary` / `output_stationary`, propagata dal `compiled_program` fino ai report.
 - [x] Aggiungere un path minimo di `preload` e `transpose` per studiare casi `output_stationary` senza forzare tutto il mapping sul solo seed systolic attuale.
 - [x] Evolvere lo `scheduler` verso code decoupled `load/store/execute` con hazard tracking minimale e metriche di overlap osservabili tra accesso memoria e compute.
-- [ ] Introdurre nel compiler primitive di loop tiled per `gemm` e `convolution`, con doppio buffering esplicito e stima dell'occupancy del cluster durante l'esecuzione.
+- [x] Introdurre nel compiler primitive di loop tiled per `gemm` e `convolution`, con doppio buffering esplicito e stima dell'occupancy del cluster durante l'esecuzione.
 - [ ] Aggiungere benchmark e casi di riferimento "Gemmini-like" per confrontare shape, dataflow, memoria locale e throughput stimato del candidato contro una baseline esterna nota.
 - [ ] Salvare nei report un delta esplicito tra requirement, mapping scelto e reference architecture family, cosi' da rendere visibile quando un candidato converge o diverge da una classe tipo Gemmini.
 

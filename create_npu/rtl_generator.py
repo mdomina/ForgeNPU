@@ -541,6 +541,7 @@ def _systolic_tile_template(operand_width: int, acc_width: int, seed_rows: int, 
   input  logic rst_n,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activations_west_i,
   input  logic signed [COLS*DATA_WIDTH-1:0] weights_north_i,
+  input  logic output_stationary_i,
   input  logic load_inputs_en,
   input  logic compute_en,
   input  logic flush_pipeline,
@@ -639,6 +640,26 @@ def _systolic_tile_template(operand_width: int, acc_width: int, seed_rows: int, 
             valid_regs[row_idx][col_idx] <= pe_valids[row_idx][col_idx];
           end
         end
+        if (output_stationary_i && !load_inputs_en) begin
+          for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
+            for (col_idx = COLS - 1; col_idx >= 0; col_idx = col_idx - 1) begin
+              if (col_idx == 0) begin
+                activation_regs[row_idx][col_idx] <= '0;
+              end else begin
+                activation_regs[row_idx][col_idx] <= activation_regs[row_idx][col_idx - 1];
+              end
+            end
+          end
+          for (row_idx = ROWS - 1; row_idx >= 0; row_idx = row_idx - 1) begin
+            for (col_idx = 0; col_idx < COLS; col_idx = col_idx + 1) begin
+              if (row_idx == 0) begin
+                weight_regs[row_idx][col_idx] <= '0;
+              end else begin
+                weight_regs[row_idx][col_idx] <= weight_regs[row_idx - 1][col_idx];
+              end
+            end
+          end
+        end
       end else if (!flush_pipeline) begin
         for (row_idx = 0; row_idx < ROWS; row_idx = row_idx + 1) begin
           for (col_idx = 0; col_idx < COLS; col_idx = col_idx + 1) begin
@@ -671,11 +692,14 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
   localparam int ROWS = 2;
   localparam int COLS = 2;
   localparam int PE_COUNT = ROWS * COLS;
+  localparam logic OUTPUT_STATIONARY_DISABLED = 1'b0;
+  localparam logic OUTPUT_STATIONARY_ENABLED = 1'b1;
 
   logic clk;
   logic rst_n;
   logic signed [ROWS*DATA_WIDTH-1:0] activations_west_i;
   logic signed [COLS*DATA_WIDTH-1:0] weights_north_i;
+  logic output_stationary_i;
   logic load_inputs_en;
   logic compute_en;
   logic flush_pipeline;
@@ -693,6 +717,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     .rst_n(rst_n),
     .activations_west_i(activations_west_i),
     .weights_north_i(weights_north_i),
+    .output_stationary_i(output_stationary_i),
     .load_inputs_en(load_inputs_en),
     .compute_en(compute_en),
     .flush_pipeline(flush_pipeline),
@@ -751,6 +776,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     rst_n = 1'b0;
     activations_west_i = '0;
     weights_north_i = '0;
+    output_stationary_i = OUTPUT_STATIONARY_DISABLED;
     load_inputs_en = 1'b0;
     compute_en = 1'b0;
     flush_pipeline = 1'b0;
@@ -759,6 +785,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     rst_n = 1'b1;
 
     set_edge_inputs(1, 2, 5, 6);
+    output_stationary_i = OUTPUT_STATIONARY_DISABLED;
     load_inputs_en = 1'b1;
     compute_en = 1'b0;
     clear_acc = 1'b0;
@@ -801,6 +828,7 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
 
     clear_acc = 1'b0;
     set_edge_inputs(9, 10, 1, 2);
+    output_stationary_i = OUTPUT_STATIONARY_DISABLED;
     load_inputs_en = 1'b1;
     @(posedge clk);
     #1;
@@ -811,6 +839,38 @@ def _systolic_tile_tb_template(operand_width: int, acc_width: int) -> str:
     @(posedge clk);
     #1;
     expect_outputs(9, 0, 0, 0, 4'b1111);
+
+    compute_en = 1'b0;
+    clear_acc = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(0, 0, 0, 0, 4'b0000);
+
+    clear_acc = 1'b0;
+    flush_pipeline = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(0, 0, 0, 0, 4'b0000);
+
+    flush_pipeline = 1'b0;
+    set_edge_inputs(1, 2, 3, 4);
+    output_stationary_i = OUTPUT_STATIONARY_ENABLED;
+    load_inputs_en = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(0, 0, 0, 0, 4'b0000);
+
+    set_edge_inputs(0, 0, 0, 0);
+    load_inputs_en = 1'b0;
+    compute_en = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(3, 0, 0, 0, 4'b1111);
+
+    compute_en = 1'b1;
+    @(posedge clk);
+    #1;
+    expect_outputs(3, 0, 0, 8, 4'b1111);
 
     $display("systolic_tile_tb passed");
     $finish;
@@ -832,6 +892,7 @@ def _systolic_tile_rect_tb_template(operand_width: int, acc_width: int) -> str:
   logic rst_n;
   logic signed [ROWS*DATA_WIDTH-1:0] activations_west_i;
   logic signed [COLS*DATA_WIDTH-1:0] weights_north_i;
+  logic output_stationary_i;
   logic load_inputs_en;
   logic compute_en;
   logic flush_pipeline;
@@ -849,6 +910,7 @@ def _systolic_tile_rect_tb_template(operand_width: int, acc_width: int) -> str:
     .rst_n(rst_n),
     .activations_west_i(activations_west_i),
     .weights_north_i(weights_north_i),
+    .output_stationary_i(output_stationary_i),
     .load_inputs_en(load_inputs_en),
     .compute_en(compute_en),
     .flush_pipeline(flush_pipeline),
@@ -908,6 +970,7 @@ def _systolic_tile_rect_tb_template(operand_width: int, acc_width: int) -> str:
     rst_n = 1'b0;
     activations_west_i = '0;
     weights_north_i = '0;
+    output_stationary_i = 1'b0;
     load_inputs_en = 1'b0;
     compute_en = 1'b0;
     flush_pipeline = 1'b0;
@@ -1620,6 +1683,7 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: i
   input  logic [ADDR_WIDTH-1:0] activation_read_addr_i,
   input  logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i,
   input  logic [ADDR_WIDTH-1:0] weight_read_addr_i,
+  input  logic output_stationary_i,
   input  logic compute_en_i,
   input  logic flush_pipeline_i,
   input  logic clear_acc_i,
@@ -1722,6 +1786,7 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: i
     .rst_n(rst_n),
     .activations_west_i(activations_west),
     .weights_north_i(weights_north),
+    .output_stationary_i(output_stationary_i),
     .load_inputs_en(scratchpad_vector_valid_o),
     .compute_en(compute_en_i),
     .flush_pipeline(flush_pipeline_i),
@@ -1796,6 +1861,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   logic [ADDR_WIDTH-1:0] activation_read_addr_i;
   logic [BANK_SEL_WIDTH-1:0] weight_read_bank_i;
   logic [ADDR_WIDTH-1:0] weight_read_addr_i;
+  logic output_stationary_i;
   logic compute_en_i;
   logic flush_pipeline_i;
   logic clear_acc_i;
@@ -1833,6 +1899,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     .activation_read_addr_i(activation_read_addr_i),
     .weight_read_bank_i(weight_read_bank_i),
     .weight_read_addr_i(weight_read_addr_i),
+    .output_stationary_i(output_stationary_i),
     .compute_en_i(compute_en_i),
     .flush_pipeline_i(flush_pipeline_i),
     .clear_acc_i(clear_acc_i),
@@ -2051,6 +2118,7 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     #1;
 
     load_tile_vectors(1, 0, 1, 0);
+    output_stationary_i = 1'b0;
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b1);
 
     compute_step();
@@ -2070,6 +2138,26 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     clear_step();
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b0);
     expect_accumulator(0, 0, 0, 0, 4'b0000, 1'b0);
+
+    dma_activation_vector(0, 0, 1, 2);
+    idle_controls();
+    @(posedge clk);
+    #1;
+
+    dma_weight_vector(0, 0, 3, 4);
+    idle_controls();
+    @(posedge clk);
+    #1;
+
+    output_stationary_i = 1'b1;
+    load_tile_vectors(0, 0, 0, 0);
+    expect_outputs(0, 0, 0, 0, 4'b0000, 1'b1);
+
+    compute_step();
+    expect_outputs(3, 0, 0, 0, 4'b1111, 1'b0);
+
+    compute_step();
+    expect_outputs(3, 0, 0, 8, 4'b1111, 1'b0);
 
     $display("tile_compute_unit_tb passed");
     $finish;
@@ -3241,6 +3329,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   input  logic [ADDR_WIDTH-1:0] store_stride_i,
   input  logic [1:0] store_burst_count_i,
   input  logic clear_on_done_i,
+  input  logic output_stationary_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i,
   input  logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i,
   input  logic signed [COLS*DATA_WIDTH-1:0] weight_slot0_i,
@@ -3466,6 +3555,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
         .activation_read_addr_i(fabric_activation_local_read_addr),
         .weight_read_bank_i(fabric_weight_read_bank_select),
         .weight_read_addr_i(fabric_weight_local_read_addr),
+        .output_stationary_i(output_stationary_i),
         .compute_en_i(fabric_tile_compute_en[tile_idx]),
         .flush_pipeline_i(fabric_tile_flush_pipeline[tile_idx]),
         .clear_acc_i(fabric_tile_clear_acc[tile_idx]),
@@ -3534,6 +3624,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
   logic [ADDR_WIDTH-1:0] store_stride_i;
   logic [1:0] store_burst_count_i;
   logic clear_on_done_i;
+  logic output_stationary_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot0_i;
   logic signed [ROWS*DATA_WIDTH-1:0] activation_slot1_i;
   logic signed [COLS*DATA_WIDTH-1:0] weight_slot0_i;
@@ -3573,6 +3664,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     .store_stride_i(store_stride_i),
     .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
+    .output_stationary_i(output_stationary_i),
     .activation_slot0_i(activation_slot0_i),
     .activation_slot1_i(activation_slot1_i),
     .weight_slot0_i(weight_slot0_i),
@@ -3717,6 +3809,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b1;
+    output_stationary_i = 1'b{int(primary_case["steps"][0].get("output_stationary_i", 0))};
     activation_slot0_i = '0;
     activation_slot1_i = '0;
     weight_slot0_i = '0;
@@ -3751,6 +3844,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b0;
+    output_stationary_i = 1'b{int(short_case["steps"][0].get("output_stationary_i", 0))};
 
 {_render_top_npu_tb_steps(short_case)}
 
@@ -3761,6 +3855,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     store_ready_i = 1'b1;
     repeat (2) @(posedge clk);
     rst_n = 1'b1;
+    output_stationary_i = 1'b{int(dual_tile_case["steps"][0].get("output_stationary_i", 0))};
 
 {_render_top_npu_tb_steps(dual_tile_case)}
 
@@ -3781,6 +3876,7 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd1;
     clear_on_done_i = 1'b0;
+    output_stationary_i = 1'b{int(backpressure_case["steps"][0].get("output_stationary_i", 0))};
 
 {_render_top_npu_tb_steps(backpressure_case)}
 
@@ -3812,6 +3908,7 @@ def _program_seed_vectors(compiled_program: Optional[Dict[str, object]] = None) 
         "store_stride_i": 1,
         "store_burst_count_i": 2,
         "clear_on_done_i": 1,
+        "output_stationary_i": 0,
     }
 
 
@@ -4802,6 +4899,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [1, 2],
                         "weights_north_i": [5, 6],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 1,
                         "compute_en": 0,
                         "clear_acc": 0,
@@ -4813,6 +4911,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [3, 4],
                         "weights_north_i": [7, 8],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 1,
                         "compute_en": 0,
                         "clear_acc": 0,
@@ -4824,6 +4923,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [0, 0],
                         "weights_north_i": [0, 0],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 0,
                         "compute_en": 1,
                         "clear_acc": 0,
@@ -4835,6 +4935,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [0, 0],
                         "weights_north_i": [0, 0],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 0,
                         "compute_en": 1,
                         "clear_acc": 0,
@@ -4846,6 +4947,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [0, 0],
                         "weights_north_i": [0, 0],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 0,
                         "compute_en": 0,
                         "clear_acc": 1,
@@ -4864,6 +4966,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [9, 10],
                         "weights_north_i": [1, 2],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 1,
                         "compute_en": 0,
                         "clear_acc": 0,
@@ -4875,6 +4978,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [0, 0],
                         "weights_north_i": [0, 0],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 0,
                         "compute_en": 1,
                         "clear_acc": 0,
@@ -4886,12 +4990,56 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                     {
                         "activations_west_i": [0, 0],
                         "weights_north_i": [0, 0],
+                        "output_stationary_i": 0,
                         "load_inputs_en": 0,
                         "compute_en": 0,
                         "clear_acc": 0,
                         "expected": {
                             "psums_o": [9, 0, 0, 0],
                             "valids_o": [0, 0, 0, 0],
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "output_stationary_compute_shift",
+                "rows": 2,
+                "cols": 2,
+                "steps": [
+                    {
+                        "activations_west_i": [1, 2],
+                        "weights_north_i": [3, 4],
+                        "output_stationary_i": 1,
+                        "load_inputs_en": 1,
+                        "compute_en": 0,
+                        "clear_acc": 0,
+                        "expected": {
+                            "psums_o": [0, 0, 0, 0],
+                            "valids_o": [0, 0, 0, 0],
+                        },
+                    },
+                    {
+                        "activations_west_i": [0, 0],
+                        "weights_north_i": [0, 0],
+                        "output_stationary_i": 1,
+                        "load_inputs_en": 0,
+                        "compute_en": 1,
+                        "clear_acc": 0,
+                        "expected": {
+                            "psums_o": [3, 0, 0, 0],
+                            "valids_o": [1, 1, 1, 1],
+                        },
+                    },
+                    {
+                        "activations_west_i": [0, 0],
+                        "weights_north_i": [0, 0],
+                        "output_stationary_i": 1,
+                        "load_inputs_en": 0,
+                        "compute_en": 1,
+                        "clear_acc": 0,
+                        "expected": {
+                            "psums_o": [3, 0, 0, 8],
+                            "valids_o": [1, 1, 1, 1],
                         },
                     },
                 ],

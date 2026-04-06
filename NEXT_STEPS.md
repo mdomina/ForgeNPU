@@ -94,7 +94,7 @@ Nota:
 - evitare per ora integrazione con `Chipyard`, `RoCC` o toolchain `Chisel`, privilegiando concetti riassorbibili nei seed RTL SystemVerilog, nel compiler e nel reporting gia' presenti.
 
 - [x] Introdurre un `accumulator_buffer` esplicito separato dallo `scratchpad_controller`, con supporto a partial sums persistenti, cast/scaling in readback e hook minimi per bias.
-- [ ] Estendere `tile_compute_unit` e `systolic_tile` con una selezione reale del dataflow `weight_stationary` / `output_stationary`, propagata dal `compiled_program` fino ai report.
+- [x] Estendere `tile_compute_unit` e `systolic_tile` con una selezione reale del dataflow `weight_stationary` / `output_stationary`, propagata dal `compiled_program` fino ai report.
 - [ ] Aggiungere un path minimo di `preload` e `transpose` per studiare casi `output_stationary` senza forzare tutto il mapping sul solo seed systolic attuale.
 - [ ] Evolvere lo `scheduler` verso code decoupled `load/store/execute` con hazard tracking minimale e metriche di overlap osservabili tra accesso memoria e compute.
 - [ ] Introdurre nel compiler primitive di loop tiled per `gemm` e `convolution`, con doppio buffering esplicito e stima dell'occupancy del cluster durante l'esecuzione.

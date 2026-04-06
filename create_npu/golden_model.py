@@ -59,6 +59,7 @@ def systolic_tile_reference(
         compute_en = bool(step["compute_en"])
         clear_acc = bool(step["clear_acc"])
         flush_pipeline = bool(step.get("flush_pipeline", 0))
+        output_stationary = bool(step.get("output_stationary_i", 0))
         activations_west = [int(value) for value in step["activations_west_i"]]
         weights_north = [int(value) for value in step["weights_north_i"]]
 
@@ -99,6 +100,23 @@ def systolic_tile_reference(
                     )
             psum_regs = next_psums
             valid_regs = next_valids
+            if output_stationary and not load_inputs_en:
+                next_activations = [[0 for _ in range(cols)] for _ in range(rows)]
+                next_weights = [[0 for _ in range(cols)] for _ in range(rows)]
+                for row in range(rows):
+                    for col in range(cols - 1, -1, -1):
+                        if col == 0:
+                            next_activations[row][col] = 0
+                        else:
+                            next_activations[row][col] = activation_regs[row][col - 1]
+                for row in range(rows - 1, -1, -1):
+                    for col in range(cols):
+                        if row == 0:
+                            next_weights[row][col] = 0
+                        else:
+                            next_weights[row][col] = weight_regs[row - 1][col]
+                activation_regs = next_activations
+                weight_regs = next_weights
         else:
             valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
 
@@ -247,6 +265,7 @@ def tile_compute_unit_reference(
         compute_en = bool(step["compute_en_i"])
         clear_acc = bool(step["clear_acc_i"])
         flush_pipeline = bool(step.get("flush_pipeline_i", 0))
+        output_stationary = bool(step.get("output_stationary_i", 0))
 
         prev_activation_regs = [row[:] for row in activation_regs]
         prev_weight_regs = [row[:] for row in weight_regs]
@@ -284,6 +303,19 @@ def tile_compute_unit_reference(
                         prev_activation_regs[row][col] * prev_weight_regs[row][col]
                     )
                     next_valid_regs[row][col] = True
+            if output_stationary and not scratchpad_vector_valid:
+                for row in range(rows):
+                    for col in range(cols - 1, -1, -1):
+                        if col == 0:
+                            next_activation_regs[row][col] = 0
+                        else:
+                            next_activation_regs[row][col] = prev_activation_regs[row][col - 1]
+                for row in range(rows - 1, -1, -1):
+                    for col in range(cols):
+                        if row == 0:
+                            next_weight_regs[row][col] = 0
+                        else:
+                            next_weight_regs[row][col] = prev_weight_regs[row - 1][col]
         else:
             next_valid_regs = [[False for _ in range(cols)] for _ in range(rows)]
 
@@ -657,6 +689,7 @@ def top_npu_context_reference(
                     "compute_en_i": cycle_interconnect_snapshot["tile_compute_en_o"][tile_index],
                     "flush_pipeline_i": cycle_interconnect_snapshot["tile_flush_pipeline_o"][tile_index],
                     "clear_acc_i": cycle_interconnect_snapshot["tile_clear_acc_o"][tile_index],
+                    "output_stationary_i": int(step.get("output_stationary_i", 0)),
                 }
             )
         tile_snapshots_by_index.append(

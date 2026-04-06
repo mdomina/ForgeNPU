@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List
 
 from create_npu.models import ArchitectureCandidate, RequirementSpec
+from create_npu.workloads import resolve_dataflow_for_family
 
 
 @dataclass
@@ -81,7 +82,7 @@ def compile_seed_program(
     activation_slots = _activation_slots(spec)
     weight_slots = _weight_slots(spec)
     clear_on_done = spec.execution_mode != "training"
-    tiling_strategy = _tiling_strategy(spec)
+    tiling_strategy = _tiling_strategy(spec=spec, mapping_plan=mapping_plan)
     operand_width_bits = 8 if spec.numeric_precision.startswith("INT8") else 16
 
     estimated_activation_bytes = slot_count * tile_rows * math.ceil(operand_width_bits / 8.0)
@@ -115,6 +116,11 @@ def compile_seed_program(
         rationale.append(f"Batch massimo {spec.batch_max} usato per aumentare parallelismo e burst di store.")
     if not clear_on_done:
         rationale.append("`clear_on_done` disabilitato per preservare stato tra iterazioni stile training.")
+    rationale.append(
+        "Dataflow compilato: "
+        f"{mapping_plan.get('dataflow', 'systolic')} "
+        f"(output_stationary_i={int(mapping_plan.get('output_stationary_enabled', 0))})."
+    )
 
     return CompiledProgram(
         name=f"{spec.workload_type}_{spec.execution_mode}_seed_program",
@@ -168,6 +174,7 @@ def compiled_program_seed_vectors(program: CompiledProgram) -> Dict[str, object]
         "store_stride_i": int(program.store_stride),
         "store_burst_count_i": int(program.store_burst_count),
         "clear_on_done_i": 1 if program.clear_on_done else 0,
+        "output_stationary_i": int(program.mapping_plan.get("output_stationary_enabled", 0)),
     }
 
 
@@ -260,13 +267,20 @@ def _active_tile_count(
     return 1
 
 
-def _tiling_strategy(spec: RequirementSpec) -> str:
+def _tiling_strategy(spec: RequirementSpec, mapping_plan: Dict[str, Any]) -> str:
+    dataflow = str(mapping_plan.get("dataflow", "systolic"))
     if spec.workload_type == "transformer":
+        if dataflow == "output_stationary":
+            return "output_stationary_sequence_blocking"
         return "sequence_blocking"
     if spec.workload_type == "convolution":
+        if dataflow == "output_stationary":
+            return "output_stationary_window"
         return "weight_stationary_window"
     if spec.workload_type == "sparse_linear_algebra":
         return "sparse_stream_compaction"
+    if dataflow == "output_stationary":
+        return "output_stationary_blocking"
     return "gemm_blocking"
 
 
@@ -449,25 +463,33 @@ def _mapping_plan(
     tile_cols: int,
     active_tile_count: int,
 ) -> Dict[str, Any]:
+    resolved_dataflow = _resolved_mapping_dataflow(spec=spec, architecture=architecture)
     if spec.workload_type == "transformer":
         return {
-            "dataflow": "systolic",
+            "dataflow": resolved_dataflow,
             "loop_order": ["batch", "sequence_block", "head", "k_block"],
             "sequence_block": tile_rows,
             "projection_block": tile_cols,
             "head_parallelism": min(int(problem_shape["head_count"]), active_tile_count),
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
+            "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
         }
     if spec.workload_type == "convolution":
+        loop_order = (
+            ["batch", "spatial_block", "output_channel_block", "kernel"]
+            if resolved_dataflow == "output_stationary"
+            else ["batch", "output_channel_block", "spatial_block", "kernel"]
+        )
         return {
-            "dataflow": "weight_stationary",
-            "loop_order": ["batch", "output_channel_block", "spatial_block", "kernel"],
+            "dataflow": resolved_dataflow,
+            "loop_order": loop_order,
             "output_channel_block": tile_cols * max(1, active_tile_count),
             "spatial_block": tile_rows,
             "kernel_window": int(problem_shape["kernel_height"]) * int(problem_shape["kernel_width"]),
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
+            "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
         }
     if spec.workload_type == "sparse_linear_algebra":
         return {
@@ -479,16 +501,30 @@ def _mapping_plan(
             "sparsity_mode": spec.sparsity_support,
             "active_tile_count": active_tile_count,
             "architecture_family": architecture.family,
+            "output_stationary_enabled": 0,
         }
     return {
-        "dataflow": "gemm_blocking",
+        "dataflow": resolved_dataflow,
         "loop_order": ["m_block", "n_block", "k_block"],
         "m_block": tile_rows,
         "n_block": tile_cols * max(1, active_tile_count),
         "k_block": tile_cols,
         "active_tile_count": active_tile_count,
         "architecture_family": architecture.family,
+        "output_stationary_enabled": int(resolved_dataflow == "output_stationary"),
     }
+
+
+def _resolved_mapping_dataflow(
+    spec: RequirementSpec,
+    architecture: ArchitectureCandidate,
+) -> str:
+    if spec.workload_type == "sparse_linear_algebra":
+        return "sparse_streaming"
+    resolved_dataflow = resolve_dataflow_for_family(architecture.family)
+    if resolved_dataflow == "sparse":
+        return "sparse_streaming"
+    return resolved_dataflow
 
 
 def _align_up(value: int, granularity: int) -> int:

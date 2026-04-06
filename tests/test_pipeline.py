@@ -169,6 +169,26 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(program.mapping_plan["dataflow"], "weight_stationary")
         self.assertGreater(program.operator_descriptors[0]["output_channels"], 0)
 
+    def test_compile_seed_program_for_output_stationary_dataflow(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS dense GEMM output-stationary.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            preferred_dataflow="output_stationary",
+            target_frequency_mhz=900.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+        vectors = compiled_program_seed_vectors(program)
+
+        self.assertEqual(architecture.family, "output_stationary_array")
+        self.assertEqual(program.mapping_plan["dataflow"], "output_stationary")
+        self.assertEqual(program.mapping_plan["output_stationary_enabled"], 1)
+        self.assertEqual(program.tiling_strategy, "output_stationary_blocking")
+        self.assertEqual(vectors["output_stationary_i"], 1)
+
 
 class ArchitecturePlanningTest(unittest.TestCase):
     def test_plan_architecture_respects_memory_and_bandwidth_hints(self) -> None:
@@ -1163,9 +1183,56 @@ class PipelineTest(unittest.TestCase):
                 report_payload["summary"]["compiled_program"]["operator_descriptors"][0]["op_type"],
                 "conv2d",
             )
+
+    def test_pipeline_propagates_output_stationary_dataflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 4 TOPS per dense GEMM output-stationary, batch 1-2.",
+                num_candidates=1,
+            )
+
+            self.assertEqual(result.architecture.family, "output_stationary_array")
+            compiled_program = json.loads(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "compiled_program.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(compiled_program["mapping_plan"]["dataflow"], "output_stationary")
+            self.assertEqual(compiled_program["mapping_plan"]["output_stationary_enabled"], 1)
+            top_npu_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "top_npu.sv"
+            ).read_text(encoding="utf-8")
+            tile_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "systolic_tile.sv"
+            ).read_text(encoding="utf-8")
+            self.assertIn("input  logic output_stationary_i", top_npu_rtl)
+            self.assertIn("input  logic output_stationary_i", tile_rtl)
+
+            report_payload = json.loads(Path(result.report["path"]).read_text(encoding="utf-8"))
             self.assertEqual(
-                report_payload["summary"]["compiled_program"]["problem_shape"]["kernel_height"],
-                3,
+                report_payload["summary"]["dataflow_profile"]["compiled_program_dataflow"],
+                "output_stationary",
+            )
+            self.assertEqual(
+                report_payload["summary"]["dataflow_profile"]["rtl_output_stationary_enabled"],
+                1,
+            )
+            self.assertEqual(report_payload["cases"][0]["program"]["output_stationary_i"], 1)
+            self.assertEqual(
+                report_payload["summary"]["compiled_program"]["tiling_strategy"],
+                "output_stationary_blocking",
             )
 
     def test_pipeline_archives_dataset_samples(self) -> None:

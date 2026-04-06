@@ -84,13 +84,19 @@ def _build_execution_report(
         architecture=architecture,
         operand_width_bits=bundle.operand_width_bits,
     )
-    summary["compiled_program"] = payload.get("compiled_program", {})
+    compiled_program = payload.get("compiled_program", {})
+    summary["compiled_program"] = compiled_program
     summary["stress_verification"] = _build_stress_verification_summary(top_level_stress_cases)
     summary["internal_stress_verification"] = _build_internal_stress_verification_summary(
         internal_stress_cases
     )
     summary["requirement_profile"] = _build_requirement_profile(spec=spec, architecture=architecture)
     summary["workload_profile"] = _build_workload_profile(spec=spec, architecture=architecture)
+    summary["dataflow_profile"] = _build_dataflow_profile(
+        spec=spec,
+        architecture=architecture,
+        compiled_program=compiled_program,
+    )
 
     return {
         "available": bool(case_reports),
@@ -288,6 +294,7 @@ def _extract_program_inputs(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         "store_stride_i",
         "store_burst_count_i",
         "clear_on_done_i",
+        "output_stationary_i",
         "store_ready_i",
     ]
     program = {}
@@ -838,6 +845,36 @@ def _build_requirement_profile(
         "interfaces": list(spec.interfaces),
         "assumptions": list(spec.assumptions),
         "ambiguities": list(spec.ambiguities),
+    }
+
+
+def _build_dataflow_profile(
+    spec: Optional[RequirementSpec],
+    architecture: Optional[ArchitectureCandidate],
+    compiled_program: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if spec is None and architecture is None and not compiled_program:
+        return None
+
+    selected_family = architecture.family if architecture else resolve_family_for_spec(
+        workload_type=spec.workload_type if spec else "dense_gemm",
+        preferred_dataflow=spec.preferred_dataflow if spec else "auto",
+    )
+    compiled_mapping = (compiled_program or {}).get("mapping_plan", {})
+    compiled_dataflow = str(compiled_mapping.get("dataflow", resolve_dataflow_for_family(selected_family)))
+
+    return {
+        "preferred_dataflow": spec.preferred_dataflow if spec else "auto",
+        "resolved_requirement_dataflow": resolve_dataflow_for_spec(
+            workload_type=spec.workload_type if spec else "dense_gemm",
+            preferred_dataflow=spec.preferred_dataflow if spec else "auto",
+        ),
+        "selected_architecture_dataflow": resolve_dataflow_for_family(selected_family),
+        "compiled_program_dataflow": compiled_dataflow,
+        "rtl_output_stationary_enabled": int(
+            compiled_mapping.get("output_stationary_enabled", compiled_dataflow == "output_stationary")
+        ),
+        "tiling_strategy": (compiled_program or {}).get("tiling_strategy"),
     }
 
 

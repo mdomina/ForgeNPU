@@ -84,7 +84,7 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 
 - [x] Introdurre un layer compiler/mapping che traduca workload e requirement in un programma seed `LOAD/COMPUTE/STORE`.
 - [x] Estendere il compiler a shape/operatori reali oltre i descrittori seed sintetici correnti.
-- [ ] Collegare il compiler a benchmark workload-specifici piu' ricchi.
+- [x] Collegare il compiler a benchmark workload-specifici piu' ricchi.
 
 ## Verifica e Stress
 

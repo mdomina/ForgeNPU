@@ -93,6 +93,51 @@ def _benchmark_cases(llm_model: Optional[str]) -> List[Dict[str, Any]]:
             "required_supporting_files": [],
         },
         {
+            "case_id": "convolution_weight_stationary_mapping",
+            "description": "Regressione workload-specifica per convolution con mapping weight-stationary.",
+            "requirement": (
+                "Voglio una NPU INT8 da 8 TOPS per CNN conv2d kernel 3x3 "
+                "a bassa latenza con HBM e weight-stationary dataflow, batch 1-2."
+            ),
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "tiling_strategy"), "weight_stationary_window"),
+                (("compiled_program", "problem_shape", "kernel_height"), 3),
+                (("compiled_program", "problem_shape", "output_channels"), 64),
+                (("compiled_program", "mapping_plan", "dataflow"), "weight_stationary"),
+                (("compiled_program", "operator_descriptors", 0, "op_type"), "conv2d"),
+                (("workload_profile", "workload_type"), "convolution"),
+                (("top_npu_throughput", "estimated_effective_tops"), 0.98304),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
+            "case_id": "sparse_spmm_mapping",
+            "description": "Regressione workload-specifica per sparse matmul con mapping stream-compacted.",
+            "requirement": "Voglio una NPU INT8 da 4 TOPS per sparse matmul SpMM con batch 1-2 e sparsity 2:4.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "tiling_strategy"), "sparse_stream_compaction"),
+                (("compiled_program", "problem_shape", "density_percent"), 50),
+                (("compiled_program", "mapping_plan", "dataflow"), "sparse_streaming"),
+                (("compiled_program", "operator_descriptors", 0, "op_type"), "spmm"),
+                (("compiled_program", "operator_descriptors", 0, "block_structure"), "2:4"),
+                (("workload_profile", "workload_type"), "sparse_linear_algebra"),
+                (("top_npu_throughput", "estimated_effective_tops"), 0.4096),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
             "case_id": "llm_fallback_capture",
             "description": "Regressione del fallback LLM con artifact di richiesta persistiti.",
             "requirement": "Voglio una NPU INT8 da 10 TOPS per dense GEMM.",
@@ -149,7 +194,7 @@ def _validate_case(
             if not _values_match(actual, expected):
                 failures.append(
                     "Summary inatteso per "
-                    f"{'.'.join(path)}: atteso {expected}, ottenuto {actual}."
+                    f"{'.'.join(str(part) for part in path)}: atteso {expected}, ottenuto {actual}."
                 )
 
     tool_results = {tool.name: tool for tool in result.tool_results}
@@ -186,9 +231,16 @@ def _validate_required_toolchain(tool_results: Dict[str, ToolResult]) -> List[st
     return failures
 
 
-def _get_nested_value(payload: Dict[str, Any], path: Sequence[str]) -> Any:
+def _get_nested_value(payload: Dict[str, Any], path: Sequence[Any]) -> Any:
     current: Any = payload
     for key in path:
+        if isinstance(key, int):
+            if not isinstance(current, list):
+                return None
+            if key < 0 or key >= len(current):
+                return None
+            current = current[key]
+            continue
         if not isinstance(current, dict):
             return None
         current = current.get(key)

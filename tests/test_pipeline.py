@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Dict, Optional
 from unittest.mock import patch
 
 from create_npu.architect import generate_candidate_architectures, plan_architecture
@@ -1549,6 +1550,60 @@ class BenchmarkTest(unittest.TestCase):
             def fake_run(*, requirement_text, output_dir, num_candidates, generator_backend, llm_model):
                 case_id = Path(output_dir).name
                 output_dir.mkdir(parents=True, exist_ok=True)
+                if case_id == "convolution_weight_stationary_mapping":
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(output_dir / "compiled_program.json")],
+                        estimated_effective_tops=0.98304,
+                        workload_type="convolution",
+                        architecture_family="weight_stationary_array",
+                        compiled_program_summary={
+                            "tiling_strategy": "weight_stationary_window",
+                            "problem_shape": {
+                                "kernel_height": 3,
+                                "output_channels": 64,
+                            },
+                            "mapping_plan": {
+                                "dataflow": "weight_stationary",
+                            },
+                            "operator_descriptors": [
+                                {
+                                    "op_type": "conv2d",
+                                }
+                            ],
+                        },
+                    )
+                if case_id == "sparse_spmm_mapping":
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(output_dir / "compiled_program.json")],
+                        estimated_effective_tops=0.4096,
+                        workload_type="sparse_linear_algebra",
+                        architecture_family="sparse_pe_mesh",
+                        compiled_program_summary={
+                            "tiling_strategy": "sparse_stream_compaction",
+                            "problem_shape": {
+                                "density_percent": 50,
+                            },
+                            "mapping_plan": {
+                                "dataflow": "sparse_streaming",
+                            },
+                            "operator_descriptors": [
+                                {
+                                    "op_type": "spmm",
+                                    "block_structure": "2:4",
+                                }
+                            ],
+                        },
+                    )
                 if case_id == "llm_fallback_capture":
                     llm_request = output_dir / "llm_request.json"
                     llm_request.write_text("{}", encoding="utf-8")
@@ -1580,7 +1635,7 @@ class BenchmarkTest(unittest.TestCase):
                 )
 
             self.assertTrue(payload["passed"])
-            self.assertEqual(len(payload["cases"]), 2)
+            self.assertEqual(len(payload["cases"]), 4)
             self.assertTrue(Path(payload["summary_path"]).exists())
 
     def test_regression_benchmark_reports_missing_toolchain(self) -> None:
@@ -1621,10 +1676,13 @@ def _make_fake_pipeline_result(
     supporting_files: list,
     estimated_effective_tops: float,
     missing_tool_name: str = "",
+    workload_type: str = "transformer",
+    architecture_family: str = "tiled_systolic_transformer",
+    compiled_program_summary: Optional[Dict[str, object]] = None,
 ) -> PipelineResult:
     architecture = ArchitectureCandidate(
         candidate_id=candidate_id,
-        family="tiled_systolic_transformer",
+        family=architecture_family,
         tile_rows=32,
         tile_cols=32,
         tile_count=25,
@@ -1666,7 +1724,7 @@ def _make_fake_pipeline_result(
             numeric_precision="INT8",
             throughput_value=50.0 if requested_backend == "heuristic" else 10.0,
             throughput_unit="TOPS",
-            workload_type="transformer" if requested_backend == "heuristic" else "dense_gemm",
+            workload_type=workload_type if requested_backend == "heuristic" else "dense_gemm",
             batch_min=1,
             batch_max=4 if requested_backend == "heuristic" else 1,
             interfaces=["AXI4", "DMA", "scratchpad_sram"],
@@ -1704,6 +1762,24 @@ def _make_fake_pipeline_result(
                 "top_npu_throughput": {
                     "estimated_effective_tops": estimated_effective_tops,
                     "theoretical_peak_tops": 51.2,
+                },
+                "compiled_program": compiled_program_summary
+                or {
+                    "tiling_strategy": "sequence_blocking",
+                    "problem_shape": {
+                        "sequence_length": 4096,
+                    },
+                    "mapping_plan": {
+                        "dataflow": "systolic",
+                    },
+                    "operator_descriptors": [
+                        {
+                            "op_type": "gemm",
+                        }
+                    ],
+                },
+                "workload_profile": {
+                    "workload_type": workload_type if requested_backend == "heuristic" else "dense_gemm",
                 },
             },
         },

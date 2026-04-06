@@ -10,6 +10,7 @@ REQUIRED_MODULE_SECTIONS = [
     "systolic_tile",
     "dma_engine",
     "scratchpad_controller",
+    "accumulator_buffer",
     "scheduler",
     "cluster_control",
     "cluster_interconnect",

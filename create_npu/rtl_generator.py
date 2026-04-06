@@ -79,6 +79,16 @@ def emit_seed_rtl(
         encoding="utf-8",
     )
 
+    accumulator_buffer_path = rtl_dir / "accumulator_buffer.sv"
+    accumulator_buffer_path.write_text(
+        _accumulator_buffer_template(
+            acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
+        encoding="utf-8",
+    )
+
     dma_engine_path = rtl_dir / "dma_engine.sv"
     dma_engine_path.write_text(
         _dma_engine_template(
@@ -167,6 +177,12 @@ def emit_seed_rtl(
     scratchpad_tb_path = tb_dir / "scratchpad_controller_tb.sv"
     scratchpad_tb_path.write_text(
         _scratchpad_controller_tb_template(operand_width=operand_width),
+        encoding="utf-8",
+    )
+
+    accumulator_tb_path = tb_dir / "accumulator_buffer_tb.sv"
+    accumulator_tb_path.write_text(
+        _accumulator_buffer_tb_template(acc_width=acc_width),
         encoding="utf-8",
     )
 
@@ -265,10 +281,13 @@ def emit_seed_rtl(
         )
 
     notes.append(
-        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`."
+        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `accumulator_buffer`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`."
     )
     notes.append(
         "Il cluster seed separa ora il control-path nel modulo `cluster_control` e il fanout multi-tile nel modulo `cluster_interconnect`, lasciando a `top_npu` il solo assemblaggio del top-level."
+    )
+    notes.append(
+        "Il path di store del tile passa da un `accumulator_buffer` separato, con hook seed per scaling e bias in readback."
     )
     notes.append(
         "Compiler seed attivo: programma `LOAD/COMPUTE/STORE` compilato con "
@@ -287,6 +306,7 @@ def emit_seed_rtl(
             str(systolic_tile_path),
             str(dma_engine_path),
             str(scratchpad_controller_path),
+            str(accumulator_buffer_path),
             str(tile_compute_unit_path),
             str(scheduler_path),
             str(cluster_control_path),
@@ -300,6 +320,7 @@ def emit_seed_rtl(
             str(tile_rect_tb_path),
             str(dma_tb_path),
             str(scratchpad_tb_path),
+            str(accumulator_tb_path),
             str(tile_compute_tb_path),
             str(scheduler_tb_path),
             str(cluster_control_tb_path),
@@ -972,6 +993,63 @@ endmodule
 """
 
 
+def _accumulator_buffer_template(acc_width: int, seed_rows: int, seed_cols: int) -> str:
+    return f"""module accumulator_buffer #(
+  parameter int ACC_WIDTH = {acc_width},
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
+  parameter int PE_COUNT = ROWS * COLS,
+  parameter int SCALE_SHIFT_WIDTH = 4
+) (
+  input  logic clk,
+  input  logic rst_n,
+  input  logic capture_en_i,
+  input  logic clear_i,
+  input  logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_i,
+  input  logic store_en_i,
+  input  logic [SCALE_SHIFT_WIDTH-1:0] read_scale_shift_i,
+  input  logic apply_bias_i,
+  input  logic signed [PE_COUNT*ACC_WIDTH-1:0] bias_i,
+  output logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_o,
+  output logic signed [PE_COUNT*ACC_WIDTH-1:0] readback_o,
+  output logic [PE_COUNT-1:0] readback_valid_mask_o,
+  output logic buffer_valid_o
+);
+  genvar lane_idx;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      psums_o <= '0;
+      buffer_valid_o <= 1'b0;
+    end else if (clear_i) begin
+      psums_o <= '0;
+      buffer_valid_o <= 1'b0;
+    end else if (capture_en_i) begin
+      psums_o <= psums_i;
+      buffer_valid_o <= 1'b1;
+    end
+  end
+
+  generate
+    for (lane_idx = 0; lane_idx < PE_COUNT; lane_idx = lane_idx + 1) begin : gen_readback
+      wire signed [ACC_WIDTH-1:0] lane_psum = $signed(psums_o[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      wire signed [ACC_WIDTH-1:0] lane_bias = $signed(bias_i[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      wire signed [ACC_WIDTH-1:0] lane_scaled = lane_psum >>> read_scale_shift_i;
+      assign readback_o[lane_idx*ACC_WIDTH +: ACC_WIDTH] =
+        apply_bias_i ? (lane_scaled + lane_bias) : lane_scaled;
+    end
+  endgenerate
+
+  always_comb begin
+    readback_valid_mask_o = '0;
+    if (store_en_i && buffer_valid_o) begin
+      readback_valid_mask_o = '1;
+    end
+  end
+endmodule
+"""
+
+
 def _dma_engine_template(operand_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module dma_engine #(
   parameter int DATA_WIDTH = {operand_width},
@@ -1345,6 +1423,178 @@ endmodule
 """
 
 
+def _accumulator_buffer_tb_template(acc_width: int) -> str:
+    return f"""module accumulator_buffer_tb;
+  localparam int ACC_WIDTH = {acc_width};
+  localparam int ROWS = 2;
+  localparam int COLS = 2;
+  localparam int PE_COUNT = ROWS * COLS;
+
+  logic clk;
+  logic rst_n;
+  logic capture_en_i;
+  logic clear_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_i;
+  logic store_en_i;
+  logic [3:0] read_scale_shift_i;
+  logic apply_bias_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] bias_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_o;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] readback_o;
+  logic [PE_COUNT-1:0] readback_valid_mask_o;
+  logic buffer_valid_o;
+
+  accumulator_buffer #(
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS)
+  ) dut (
+    .clk(clk),
+    .rst_n(rst_n),
+    .capture_en_i(capture_en_i),
+    .clear_i(clear_i),
+    .psums_i(psums_i),
+    .store_en_i(store_en_i),
+    .read_scale_shift_i(read_scale_shift_i),
+    .apply_bias_i(apply_bias_i),
+    .bias_i(bias_i),
+    .psums_o(psums_o),
+    .readback_o(readback_o),
+    .readback_valid_mask_o(readback_valid_mask_o),
+    .buffer_valid_o(buffer_valid_o)
+  );
+
+  always #5 clk = ~clk;
+
+  task automatic idle_inputs;
+    begin
+      capture_en_i = 1'b0;
+      clear_i = 1'b0;
+      psums_i = '0;
+      store_en_i = 1'b0;
+      read_scale_shift_i = 4'd0;
+      apply_bias_i = 1'b0;
+      bias_i = '0;
+    end
+  endtask
+
+  task automatic capture_psums(
+    input integer p0,
+    input integer p1,
+    input integer p2,
+    input integer p3
+  );
+    begin
+      idle_inputs();
+      capture_en_i = 1'b1;
+      psums_i[0 +: ACC_WIDTH] = p0;
+      psums_i[ACC_WIDTH +: ACC_WIDTH] = p1;
+      psums_i[2*ACC_WIDTH +: ACC_WIDTH] = p2;
+      psums_i[3*ACC_WIDTH +: ACC_WIDTH] = p3;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic store_readback(
+    input integer shift,
+    input logic apply_bias,
+    input integer b0,
+    input integer b1,
+    input integer b2,
+    input integer b3
+  );
+    begin
+      idle_inputs();
+      store_en_i = 1'b1;
+      read_scale_shift_i = shift[3:0];
+      apply_bias_i = apply_bias;
+      bias_i[0 +: ACC_WIDTH] = b0;
+      bias_i[ACC_WIDTH +: ACC_WIDTH] = b1;
+      bias_i[2*ACC_WIDTH +: ACC_WIDTH] = b2;
+      bias_i[3*ACC_WIDTH +: ACC_WIDTH] = b3;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic clear_buffer;
+    begin
+      idle_inputs();
+      clear_i = 1'b1;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic expect_buffer(
+    input integer p0,
+    input integer p1,
+    input integer p2,
+    input integer p3,
+    input integer r0,
+    input integer r1,
+    input integer r2,
+    input integer r3,
+    input logic [PE_COUNT-1:0] expected_mask,
+    input logic expected_valid
+  );
+    begin
+      if ($signed(psums_o[0 +: ACC_WIDTH]) !== p0 ||
+          $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]) !== p1 ||
+          $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]) !== p2 ||
+          $signed(psums_o[3*ACC_WIDTH +: ACC_WIDTH]) !== p3 ||
+          $signed(readback_o[0 +: ACC_WIDTH]) !== r0 ||
+          $signed(readback_o[ACC_WIDTH +: ACC_WIDTH]) !== r1 ||
+          $signed(readback_o[2*ACC_WIDTH +: ACC_WIDTH]) !== r2 ||
+          $signed(readback_o[3*ACC_WIDTH +: ACC_WIDTH]) !== r3 ||
+          readback_valid_mask_o !== expected_mask ||
+          buffer_valid_o !== expected_valid) begin
+        $fatal(
+          1,
+          "accumulator_buffer_tb failed: expected psums=(%0d %0d %0d %0d) readback=(%0d %0d %0d %0d) mask=%0b valid=%0d got psums=(%0d %0d %0d %0d) readback=(%0d %0d %0d %0d) mask=%0b valid=%0d",
+          p0, p1, p2, p3,
+          r0, r1, r2, r3,
+          expected_mask,
+          expected_valid,
+          $signed(psums_o[0 +: ACC_WIDTH]),
+          $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(psums_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(readback_o[0 +: ACC_WIDTH]),
+          $signed(readback_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(readback_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(readback_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          readback_valid_mask_o,
+          buffer_valid_o
+        );
+      end
+    end
+  endtask
+
+  initial begin
+    clk = 1'b0;
+    rst_n = 1'b0;
+    idle_inputs();
+    repeat (2) @(posedge clk);
+    rst_n = 1'b1;
+
+    capture_psums(12, -8, 20, 4);
+    expect_buffer(12, -8, 20, 4, 12, -8, 20, 4, 4'b0000, 1'b1);
+
+    store_readback(2, 1'b1, 1, 2, 0, -1);
+    expect_buffer(12, -8, 20, 4, 4, 0, 5, 0, 4'b1111, 1'b1);
+
+    clear_buffer();
+    expect_buffer(0, 0, 0, 0, 0, 0, 0, 0, 4'b0000, 1'b0);
+
+    $display("accumulator_buffer_tb passed");
+    $finish;
+  end
+endmodule
+"""
+
+
 def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: int, seed_cols: int) -> str:
     return f"""module tile_compute_unit #(
   parameter int DATA_WIDTH = {operand_width},
@@ -1373,14 +1623,26 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: i
   input  logic compute_en_i,
   input  logic flush_pipeline_i,
   input  logic clear_acc_i,
+  input  logic store_results_en_i,
+  input  logic [3:0] accumulator_scale_shift_i,
+  input  logic accumulator_apply_bias_i,
+  input  logic signed [ROWS*COLS*ACC_WIDTH-1:0] accumulator_bias_i,
   output logic scratchpad_vector_valid_o,
   output logic dma_done_o,
   output logic dma_busy_o,
   output logic signed [ROWS*COLS*ACC_WIDTH-1:0] psums_o,
-  output logic [ROWS*COLS-1:0] valids_o
+  output logic [ROWS*COLS-1:0] valids_o,
+  output logic signed [ROWS*COLS*ACC_WIDTH-1:0] accumulator_readback_o,
+  output logic [ROWS*COLS-1:0] accumulator_valid_mask_o,
+  output logic accumulator_buffer_valid_o
 );
   logic signed [ROWS*DATA_WIDTH-1:0] activations_west;
   logic signed [COLS*DATA_WIDTH-1:0] weights_north;
+  logic signed [ROWS*COLS*ACC_WIDTH-1:0] tile_psums;
+  logic signed [ROWS*COLS*ACC_WIDTH-1:0] accumulator_buffer_readback;
+  logic signed [ROWS*COLS*ACC_WIDTH-1:0] accumulator_live_readback;
+  logic [ROWS*COLS-1:0] tile_valids;
+  logic [ROWS*COLS-1:0] accumulator_buffer_valid_mask;
   logic write_activations_en;
   logic [ADDR_WIDTH-1:0] activation_write_addr;
   logic signed [ROWS*DATA_WIDTH-1:0] activations_write_data;
@@ -1389,6 +1651,7 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: i
   logic signed [COLS*DATA_WIDTH-1:0] weights_write_data;
   logic [BANK_SEL_WIDTH-1:0] activation_write_bank_q;
   logic [BANK_SEL_WIDTH-1:0] weight_write_bank_q;
+  genvar lane_idx;
 
   dma_engine #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -1463,9 +1726,46 @@ def _tile_compute_unit_template(operand_width: int, acc_width: int, seed_rows: i
     .compute_en(compute_en_i),
     .flush_pipeline(flush_pipeline_i),
     .clear_acc(clear_acc_i),
-    .psums_o(psums_o),
-    .valids_o(valids_o)
+    .psums_o(tile_psums),
+    .valids_o(tile_valids)
   );
+
+  accumulator_buffer #(
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS)
+  ) accumulator_inst (
+    .clk(clk),
+    .rst_n(rst_n),
+    .capture_en_i(compute_en_i || store_results_en_i || flush_pipeline_i),
+    .clear_i(clear_acc_i),
+    .psums_i(tile_psums),
+    .store_en_i(store_results_en_i),
+    .read_scale_shift_i(accumulator_scale_shift_i),
+    .apply_bias_i(accumulator_apply_bias_i),
+    .bias_i(accumulator_bias_i),
+    .psums_o(),
+    .readback_o(accumulator_buffer_readback),
+    .readback_valid_mask_o(accumulator_buffer_valid_mask),
+    .buffer_valid_o(accumulator_buffer_valid_o)
+  );
+
+  generate
+    for (lane_idx = 0; lane_idx < ROWS*COLS; lane_idx = lane_idx + 1) begin : gen_live_readback
+      wire signed [ACC_WIDTH-1:0] lane_psum = $signed(tile_psums[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      wire signed [ACC_WIDTH-1:0] lane_bias = $signed(accumulator_bias_i[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      wire signed [ACC_WIDTH-1:0] lane_scaled = lane_psum >>> accumulator_scale_shift_i;
+      assign accumulator_live_readback[lane_idx*ACC_WIDTH +: ACC_WIDTH] =
+        accumulator_apply_bias_i ? (lane_scaled + lane_bias) : lane_scaled;
+    end
+  endgenerate
+
+  assign psums_o = tile_psums;
+  assign valids_o = tile_valids;
+  assign accumulator_readback_o =
+    store_results_en_i ? accumulator_live_readback : accumulator_buffer_readback;
+  assign accumulator_valid_mask_o =
+    store_results_en_i ? '1 : accumulator_buffer_valid_mask;
 endmodule
 """
 
@@ -1499,11 +1799,18 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
   logic compute_en_i;
   logic flush_pipeline_i;
   logic clear_acc_i;
+  logic store_results_en_i;
+  logic [3:0] accumulator_scale_shift_i;
+  logic accumulator_apply_bias_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] accumulator_bias_i;
   logic scratchpad_vector_valid_o;
   logic dma_done_o;
   logic dma_busy_o;
   logic signed [PE_COUNT*ACC_WIDTH-1:0] psums_o;
   logic [PE_COUNT-1:0] valids_o;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] accumulator_readback_o;
+  logic [PE_COUNT-1:0] accumulator_valid_mask_o;
+  logic accumulator_buffer_valid_o;
 
   tile_compute_unit #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -1529,11 +1836,18 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     .compute_en_i(compute_en_i),
     .flush_pipeline_i(flush_pipeline_i),
     .clear_acc_i(clear_acc_i),
+    .store_results_en_i(store_results_en_i),
+    .accumulator_scale_shift_i(accumulator_scale_shift_i),
+    .accumulator_apply_bias_i(accumulator_apply_bias_i),
+    .accumulator_bias_i(accumulator_bias_i),
     .scratchpad_vector_valid_o(scratchpad_vector_valid_o),
     .dma_done_o(dma_done_o),
     .dma_busy_o(dma_busy_o),
     .psums_o(psums_o),
-    .valids_o(valids_o)
+    .valids_o(valids_o),
+    .accumulator_readback_o(accumulator_readback_o),
+    .accumulator_valid_mask_o(accumulator_valid_mask_o),
+    .accumulator_buffer_valid_o(accumulator_buffer_valid_o)
   );
 
   always #5 clk = ~clk;
@@ -1552,6 +1866,10 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
       compute_en_i = 1'b0;
       flush_pipeline_i = 1'b0;
       clear_acc_i = 1'b0;
+      store_results_en_i = 1'b0;
+      accumulator_scale_shift_i = 4'd0;
+      accumulator_apply_bias_i = 1'b0;
+      accumulator_bias_i = '0;
     end
   endtask
 
@@ -1629,6 +1947,28 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     end
   endtask
 
+  task automatic store_step(
+    input integer shift,
+    input logic apply_bias,
+    input integer b0,
+    input integer b1,
+    input integer b2,
+    input integer b3
+  );
+    begin
+      idle_controls();
+      store_results_en_i = 1'b1;
+      accumulator_scale_shift_i = shift[3:0];
+      accumulator_apply_bias_i = apply_bias;
+      accumulator_bias_i[0 +: ACC_WIDTH] = b0;
+      accumulator_bias_i[ACC_WIDTH +: ACC_WIDTH] = b1;
+      accumulator_bias_i[2*ACC_WIDTH +: ACC_WIDTH] = b2;
+      accumulator_bias_i[3*ACC_WIDTH +: ACC_WIDTH] = b3;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
   task automatic flush_step;
     begin
       idle_controls();
@@ -1654,6 +1994,26 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
           valids_o !== expected_valids ||
           scratchpad_vector_valid_o !== expected_scratchpad_valid) begin
         $fatal(1, "tile_compute_unit_tb failed");
+      end
+    end
+  endtask
+
+  task automatic expect_accumulator(
+    input integer r0,
+    input integer r1,
+    input integer r2,
+    input integer r3,
+    input logic [PE_COUNT-1:0] expected_mask,
+    input logic expected_valid
+  );
+    begin
+      if ($signed(accumulator_readback_o[0 +: ACC_WIDTH]) !== r0 ||
+          $signed(accumulator_readback_o[ACC_WIDTH +: ACC_WIDTH]) !== r1 ||
+          $signed(accumulator_readback_o[2*ACC_WIDTH +: ACC_WIDTH]) !== r2 ||
+          $signed(accumulator_readback_o[3*ACC_WIDTH +: ACC_WIDTH]) !== r3 ||
+          accumulator_valid_mask_o !== expected_mask ||
+          accumulator_buffer_valid_o !== expected_valid) begin
+        $fatal(1, "tile_compute_unit_tb accumulator expectation failed");
       end
     end
   endtask
@@ -1699,11 +2059,17 @@ def _tile_compute_unit_tb_template(operand_width: int, acc_width: int) -> str:
     compute_step();
     expect_outputs(42, 16, 40, 24, 4'b1111, 1'b0);
 
+    store_step(1, 1'b1, 1, 0, -4, 2);
+    expect_outputs(42, 16, 40, 24, 4'b0000, 1'b0);
+    expect_accumulator(22, 8, 16, 14, 4'b1111, 1'b1);
+
     flush_step();
     expect_outputs(42, 16, 40, 24, 4'b0000, 1'b0);
+    expect_accumulator(42, 16, 40, 24, 4'b0000, 1'b1);
 
     clear_step();
     expect_outputs(0, 0, 0, 0, 4'b0000, 1'b0);
+    expect_accumulator(0, 0, 0, 0, 4'b0000, 1'b0);
 
     $display("tile_compute_unit_tb passed");
     $finish;
@@ -2940,6 +3306,9 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   logic [TILE_COUNT-1:0] scratchpad_vector_valid_unused;
   logic [TILE_COUNT-1:0] dma_done_unused;
   logic [TILE_COUNT-1:0] dma_busy_unused;
+  logic signed [TOTAL_PE_COUNT*ACC_WIDTH-1:0] tile_store_payloads;
+  logic [TOTAL_PE_COUNT-1:0] tile_store_valid_masks_unused;
+  logic [TILE_COUNT-1:0] accumulator_buffer_valid_unused;
   genvar tile_idx;
 
   scheduler #(
@@ -3049,7 +3418,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .store_ready_i(store_ready_i),
     .result_write_addr_i(result_write_addr_routed),
     .store_burst_index_i(store_burst_index_routed),
-    .tile_psums_i(psums_o),
+    .tile_psums_i(tile_store_payloads),
     .dma_accept_o(dma_accept),
     .load_accept_o(load_accept),
     .store_accept_o(store_accept),
@@ -3100,11 +3469,22 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
         .compute_en_i(fabric_tile_compute_en[tile_idx]),
         .flush_pipeline_i(fabric_tile_flush_pipeline[tile_idx]),
         .clear_acc_i(fabric_tile_clear_acc[tile_idx]),
+        .store_results_en_i(control_tile_store_results_en[tile_idx]),
+        .accumulator_scale_shift_i(4'd0),
+        .accumulator_apply_bias_i(1'b0),
+        .accumulator_bias_i('0),
         .scratchpad_vector_valid_o(scratchpad_vector_valid_unused[tile_idx]),
         .dma_done_o(dma_done_unused[tile_idx]),
         .dma_busy_o(dma_busy_unused[tile_idx]),
         .psums_o(psums_o[(tile_idx * PE_COUNT * ACC_WIDTH) +: (PE_COUNT * ACC_WIDTH)]),
-        .valids_o(valids_o[(tile_idx * PE_COUNT) +: PE_COUNT])
+        .valids_o(valids_o[(tile_idx * PE_COUNT) +: PE_COUNT]),
+        .accumulator_readback_o(
+          tile_store_payloads[(tile_idx * PE_COUNT * ACC_WIDTH) +: (PE_COUNT * ACC_WIDTH)]
+        ),
+        .accumulator_valid_mask_o(
+          tile_store_valid_masks_unused[(tile_idx * PE_COUNT) +: PE_COUNT]
+        ),
+        .accumulator_buffer_valid_o(accumulator_buffer_valid_unused[tile_idx])
       );
     end
   endgenerate
@@ -3266,12 +3646,21 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
           valids_o !== expected_valids) begin
         $fatal(
           1,
-          "top_npu_tb failed: expected state=%0d busy=%0d done=%0d store=%0d addr=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b got state=%0d busy=%0d done=%0d store=%0d addr=%0d tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b",
+          "top_npu_tb failed: expected state=%0d busy=%0d done=%0d store=%0d addr=%0d mask=%0b payload=(%0d %0d %0d %0d %0d %0d %0d %0d) tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b got state=%0d busy=%0d done=%0d store=%0d addr=%0d mask=%0b payload=(%0d %0d %0d %0d %0d %0d %0d %0d) tile0=(%0d %0d %0d %0d) tile1=(%0d %0d %0d %0d) valids=%0b",
           expected_state,
           expected_busy,
           expected_done,
           expected_store_valid,
           expected_store_addr,
+          expected_store_mask,
+          expected_store_mask[0] ? t0_p0 : 0,
+          expected_store_mask[1] ? t0_p1 : 0,
+          expected_store_mask[2] ? t0_p2 : 0,
+          expected_store_mask[3] ? t0_p3 : 0,
+          expected_store_mask[4] ? t1_p0 : 0,
+          expected_store_mask[5] ? t1_p1 : 0,
+          expected_store_mask[6] ? t1_p2 : 0,
+          expected_store_mask[7] ? t1_p3 : 0,
           t0_p0,
           t0_p1,
           t0_p2,
@@ -3286,6 +3675,15 @@ def _top_npu_tb_template(operand_width: int, acc_width: int) -> str:
           done_o,
           result_write_valid_o,
           result_write_addr_o,
+          result_write_valid_mask_o,
+          $signed(result_write_payload_o[0 +: ACC_WIDTH]),
+          $signed(result_write_payload_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[4*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[5*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[6*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(result_write_payload_o[7*ACC_WIDTH +: ACC_WIDTH]),
           $signed(psums_o[0 +: ACC_WIDTH]),
           $signed(psums_o[ACC_WIDTH +: ACC_WIDTH]),
           $signed(psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
@@ -4694,6 +5092,60 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                             "activations_west_o": [0, 0],
                             "weights_north_o": [0, 0],
                             "vector_valid_o": 0,
+                        },
+                    },
+                ],
+            }
+        ],
+        "accumulator_buffer": [
+            {
+                "name": "capture_scale_bias_and_clear",
+                "rows": 2,
+                "cols": 2,
+                "steps": [
+                    {
+                        "capture_en_i": 1,
+                        "clear_i": 0,
+                        "psums_i": [12, -8, 20, 4],
+                        "store_en_i": 0,
+                        "read_scale_shift_i": 0,
+                        "apply_bias_i": 0,
+                        "bias_i": [0, 0, 0, 0],
+                        "expected": {
+                            "psums_o": [12, -8, 20, 4],
+                            "readback_o": [12, -8, 20, 4],
+                            "readback_valid_mask_o": [0, 0, 0, 0],
+                            "buffer_valid_o": 1,
+                        },
+                    },
+                    {
+                        "capture_en_i": 0,
+                        "clear_i": 0,
+                        "psums_i": [0, 0, 0, 0],
+                        "store_en_i": 1,
+                        "read_scale_shift_i": 2,
+                        "apply_bias_i": 1,
+                        "bias_i": [1, 2, 0, -1],
+                        "expected": {
+                            "psums_o": [12, -8, 20, 4],
+                            "readback_o": [4, 0, 5, 0],
+                            "readback_valid_mask_o": [1, 1, 1, 1],
+                            "buffer_valid_o": 1,
+                        },
+                    },
+                    {
+                        "capture_en_i": 0,
+                        "clear_i": 1,
+                        "psums_i": [0, 0, 0, 0],
+                        "store_en_i": 0,
+                        "read_scale_shift_i": 0,
+                        "apply_bias_i": 0,
+                        "bias_i": [0, 0, 0, 0],
+                        "expected": {
+                            "psums_o": [0, 0, 0, 0],
+                            "readback_o": [0, 0, 0, 0],
+                            "readback_valid_mask_o": [0, 0, 0, 0],
+                            "buffer_valid_o": 0,
                         },
                     },
                 ],

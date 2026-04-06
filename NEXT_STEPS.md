@@ -86,6 +86,37 @@ Questa e' la checklist pratica dei prossimi step da seguire, in ordine consiglia
 - [x] Estendere il compiler a shape/operatori reali oltre i descrittori seed sintetici correnti.
 - [x] Collegare il compiler a benchmark workload-specifici piu' ricchi.
 
+## Backlog Ispirato a Gemmini https://github.com/ucb-bar/gemmini.git
+
+Nota:
+
+- usare Gemmini come baseline e reference architecture, non come dipendenza diretta del flow corrente;
+- evitare per ora integrazione con `Chipyard`, `RoCC` o toolchain `Chisel`, privilegiando concetti riassorbibili nei seed RTL SystemVerilog, nel compiler e nel reporting gia' presenti.
+
+- [x] Introdurre un `accumulator_buffer` esplicito separato dallo `scratchpad_controller`, con supporto a partial sums persistenti, cast/scaling in readback e hook minimi per bias.
+- [ ] Estendere `tile_compute_unit` e `systolic_tile` con una selezione reale del dataflow `weight_stationary` / `output_stationary`, propagata dal `compiled_program` fino ai report.
+- [ ] Aggiungere un path minimo di `preload` e `transpose` per studiare casi `output_stationary` senza forzare tutto il mapping sul solo seed systolic attuale.
+- [ ] Evolvere lo `scheduler` verso code decoupled `load/store/execute` con hazard tracking minimale e metriche di overlap osservabili tra accesso memoria e compute.
+- [ ] Introdurre nel compiler primitive di loop tiled per `gemm` e `convolution`, con doppio buffering esplicito e stima dell'occupancy del cluster durante l'esecuzione.
+- [ ] Aggiungere benchmark e casi di riferimento "Gemmini-like" per confrontare shape, dataflow, memoria locale e throughput stimato del candidato contro una baseline esterna nota.
+- [ ] Salvare nei report un delta esplicito tra requirement, mapping scelto e reference architecture family, cosi' da rendere visibile quando un candidato converge o diverge da una classe tipo Gemmini.
+
+## Backlog Ispirato a tiny-NPU https://github.com/harishsg993010/tiny-NPU.git
+
+Nota:
+
+- usare `tiny-NPU` come reference implementation vicina allo stack attuale (`SystemVerilog` + compiler Python + golden model + Verilator), non come top-level da assorbire integralmente;
+- privilegiare i blocchi gia' maturi e riusabili come pattern (`compiler`, `memory planner`, `scoreboard`, `gemm_ctrl`, wrapper di simulazione), evitando di copiare nel breve i path ancora parzialmente stub del top-level originale.
+
+- [ ] Introdurre un formato di `tensor_descriptor` piu' ricco nel compiler ForgeNPU, con shape, dtype, size, base address e metadati sufficienti per una futura esecuzione `graph_mode` o `operator_mode` piu' autonoma.
+- [ ] Aggiungere un `memory planner` con allocazione SRAM, `free` e riuso basato su liveness dei tensori/operatori, riportando nei report peak SRAM con e senza reuse.
+- [ ] Evolvere il compiler da solo `LOAD/COMPUTE/STORE` seed a lowering per operatori concreti, partendo da `Gemm`, `Conv` via `im2col`, `Relu`, `Reduce`, `Concat`, `Slice` e `Pool`.
+- [ ] Introdurre una modalita' di dispatch con `scoreboard` e `barrier` espliciti, separando meglio issue, dipendenze e completamento dei motori rispetto allo scheduler seed corrente.
+- [ ] Aggiungere performance counters piu' granulari per `compute`, `dma`, `stall`, `overlap` e occupazione effettiva del cluster, cosi' da rendere confrontabili i candidati anche oltre pass/fail e throughput grezzo.
+- [ ] Introdurre un path di accumulo dedicato stile `ACC SRAM` o `accumulator_buffer` per il `gemm_ctrl`, cosi' da supportare K-tiling reale, partial sums persistenti e writeback differito.
+- [ ] Preparare un wrapper di simulazione dedicato per un futuro `graph_mode` o `operator_mode`, separato dal `top_npu` principale, per verificare compiler, descriptors, DMA e motori senza bloccare l'integrazione top-level definitiva.
+- [ ] Rafforzare la regressione con casi end-to-end compiler -> golden -> RTL su grafi piccoli deterministici e fuzz workload-aware, includendo mismatch di shape, overflow SRAM, reuse aggressivo e overlap `DMA+compute`.
+
 ## Verifica e Stress
 
 - [x] Rafforzare la verifica con casi randomizzati e stress test su backpressure, flush e multi-tile.

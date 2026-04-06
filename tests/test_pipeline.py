@@ -529,6 +529,15 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "rtl"
+                    / "accumulator_buffer.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "rtl"
                     / "tile_compute_unit.sv"
                 ).exists()
             )
@@ -582,6 +591,13 @@ class PipelineTest(unittest.TestCase):
                 / "rtl"
                 / "cluster_interconnect.sv"
             ).read_text(encoding="utf-8")
+            tile_compute_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "tile_compute_unit.sv"
+            ).read_text(encoding="utf-8")
             self.assertIn("module cluster_control", cluster_control_rtl)
             self.assertIn(
                 f"parameter int TILE_COUNT = {expected_tile_count}",
@@ -590,6 +606,8 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("module cluster_interconnect", cluster_interconnect_rtl)
             self.assertIn("cluster_interconnect #(", top_npu_rtl)
             self.assertIn("cluster_control #(", top_npu_rtl)
+            self.assertIn("accumulator_buffer #(", tile_compute_rtl)
+            self.assertIn("tile_store_payloads", top_npu_rtl)
             self.assertTrue(
                 (
                     Path(result.output_dir)
@@ -606,6 +624,15 @@ class PipelineTest(unittest.TestCase):
                     / "balanced"
                     / "tb"
                     / "dma_engine_tb.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "tb"
+                    / "accumulator_buffer_tb.sv"
                 ).exists()
             )
             self.assertTrue(
@@ -671,6 +698,7 @@ class PipelineTest(unittest.TestCase):
                 ).read_text(encoding="utf-8")
             )
             self.assertEqual(len(verification_vectors["top_npu_stress"]), 3)
+            self.assertEqual(len(verification_vectors["accumulator_buffer"]), 1)
             self.assertIn("randomized", verification_vectors["top_npu_stress"][0]["stress_tags"])
             self.assertEqual(len(verification_vectors["scheduler_stress"]), 1)
             self.assertEqual(len(verification_vectors["cluster_control_stress"]), 1)
@@ -711,6 +739,7 @@ class PipelineTest(unittest.TestCase):
                 " ".join(payload["generated"]["notes"]),
             )
             self.assertIn("cluster_interconnect", " ".join(payload["generated"]["notes"]))
+            self.assertIn("accumulator_buffer", " ".join(payload["generated"]["notes"]))
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())

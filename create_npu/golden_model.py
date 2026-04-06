@@ -335,6 +335,50 @@ def tile_compute_unit_reference(
     return snapshots
 
 
+def accumulator_buffer_reference(
+    steps: List[Dict[str, object]],
+    rows: int = 2,
+    cols: int = 2,
+) -> List[Dict[str, object]]:
+    pe_count = rows * cols
+    stored_psums = [0 for _ in range(pe_count)]
+    buffer_valid = False
+    snapshots: List[Dict[str, object]] = []
+
+    for step in steps:
+        if bool(step.get("clear_i", 0)):
+            stored_psums = [0 for _ in range(pe_count)]
+            buffer_valid = False
+        elif bool(step.get("capture_en_i", 0)):
+            incoming_psums = [int(value) for value in step.get("psums_i", [])]
+            stored_psums = list(incoming_psums[:pe_count]) + [0 for _ in range(max(0, pe_count - len(incoming_psums)))]
+            buffer_valid = True
+
+        scale_shift = int(step.get("read_scale_shift_i", 0))
+        apply_bias = bool(step.get("apply_bias_i", 0))
+        bias_values = [int(value) for value in step.get("bias_i", [])]
+        bias_values = bias_values[:pe_count] + [0 for _ in range(max(0, pe_count - len(bias_values)))]
+        readback = []
+        for lane, stored_value in enumerate(stored_psums):
+            scaled_value = int(stored_value) >> scale_shift
+            if apply_bias:
+                scaled_value += int(bias_values[lane])
+            readback.append(scaled_value)
+
+        snapshots.append(
+            {
+                "psums_o": list(stored_psums),
+                "readback_o": readback,
+                "readback_valid_mask_o": [
+                    int(bool(step.get("store_en_i", 0)) and buffer_valid) for _ in range(pe_count)
+                ],
+                "buffer_valid_o": int(buffer_valid),
+            }
+        )
+
+    return snapshots
+
+
 def scheduler_reference(
     steps: List[Dict[str, object]],
     rows: int = 2,
@@ -772,6 +816,32 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['vector_valid_o']})"
                 )
 
+    for case in payload.get("accumulator_buffer", []):
+        rows = int(case.get("rows", 2))
+        cols = int(case.get("cols", 2))
+        observed_snapshots = accumulator_buffer_reference(
+            steps=case["steps"],
+            rows=rows,
+            cols=cols,
+        )
+        for step_idx, step in enumerate(case["steps"]):
+            expected = step["expected"]
+            observed = observed_snapshots[step_idx]
+            if (
+                observed["psums_o"] != expected["psums_o"]
+                or observed["readback_o"] != expected["readback_o"]
+                or observed["readback_valid_mask_o"] != expected["readback_valid_mask_o"]
+                or observed["buffer_valid_o"] != expected["buffer_valid_o"]
+            ):
+                failures.append(
+                    "accumulator_buffer/"
+                    f"{case['name']}/step_{step_idx}: expected "
+                    f"({expected['psums_o']}, {expected['readback_o']}, "
+                    f"{expected['readback_valid_mask_o']}, {expected['buffer_valid_o']}), got "
+                    f"({observed['psums_o']}, {observed['readback_o']}, "
+                    f"{observed['readback_valid_mask_o']}, {observed['buffer_valid_o']})"
+                )
+
     for case in payload.get("dma_engine", []):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
@@ -1070,6 +1140,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
         + sum(len(case["steps"]) for case in payload.get("systolic_tile", []))
         + sum(len(case["steps"]) for case in payload.get("dma_engine", []))
         + sum(len(case["steps"]) for case in payload.get("scratchpad_controller", []))
+        + sum(len(case["steps"]) for case in payload.get("accumulator_buffer", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler_stress", []))
         + sum(len(case["steps"]) for case in payload.get("cluster_control", []))

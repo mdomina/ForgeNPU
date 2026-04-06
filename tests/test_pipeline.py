@@ -616,6 +616,16 @@ class PipelineTest(unittest.TestCase):
                     / "top_npu_tb.sv"
                 ).exists()
             )
+            verification_vectors = json.loads(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "verification_vectors.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(verification_vectors["top_npu_stress"]), 3)
+            self.assertIn("randomized", verification_vectors["top_npu_stress"][0]["stress_tags"])
 
             payload = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["generated"]["primary_module"], "top_npu")
@@ -820,6 +830,20 @@ class PipelineTest(unittest.TestCase):
 
             report_payload = json.loads(Path(report["path"]).read_text(encoding="utf-8"))
             self.assertEqual(len(report_payload["cases"]), 4)
+            self.assertEqual(len(report_payload["stress_cases"]), 3)
+            self.assertEqual(report["summary"]["stress_verification"]["stress_case_count"], 3)
+            self.assertEqual(report["summary"]["stress_verification"]["backpressure_case_count"], 2)
+            self.assertEqual(report["summary"]["stress_verification"]["flush_case_count"], 2)
+            self.assertEqual(report["summary"]["stress_verification"]["multi_tile_case_count"], 2)
+            self.assertEqual(report["summary"]["stress_verification"]["max_stress_tile_count"], 3)
+            self.assertIn(
+                "randomized_multitile_backpressure_seed17",
+                report["summary"]["stress_verification"]["case_names"],
+            )
+            self.assertIn(
+                "flush",
+                report["summary"]["stress_verification"]["covered_tags"],
+            )
             self.assertEqual(report_payload["cases"][1]["name"], "single_slot_single_compute_top")
             self.assertEqual(report_payload["cases"][2]["name"], "dual_tile_broadcast_compute_top")
             self.assertEqual(report_payload["cases"][3]["name"], "single_tile_backpressure_top")

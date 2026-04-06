@@ -1018,7 +1018,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['scratchpad_vector_valid_o']})"
                 )
 
-    for case in payload.get("top_npu", []):
+    for case in list(payload.get("top_npu", [])) + list(payload.get("top_npu_stress", [])):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
         depth = int(case.get("depth", 4))
@@ -1075,6 +1075,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
         + sum(len(case["steps"]) for case in payload.get("cluster_interconnect", []))
         + sum(len(case["steps"]) for case in payload.get("tile_compute_unit", []))
         + sum(len(case["steps"]) for case in payload.get("top_npu", []))
+        + sum(len(case["steps"]) for case in payload.get("top_npu_stress", []))
     )
     return True, f"Golden model Python valido su {total_cases} casi."
 

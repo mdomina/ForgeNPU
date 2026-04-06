@@ -1,4 +1,5 @@
 import json
+import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -3952,6 +3953,121 @@ def _top_npu_backpressure_sequence_case(compiled_program: Optional[Dict[str, obj
     }
 
 
+def _top_npu_random_stress_cases(
+    compiled_program: Optional[Dict[str, object]] = None,
+) -> List[Dict[str, object]]:
+    return [
+        _randomized_top_npu_stress_case(
+            case_name="randomized_multitile_backpressure_seed17",
+            random_seed=17,
+            tile_count=2,
+            rows=2,
+            cols=2,
+            depth=4,
+            compiled_program=compiled_program,
+            stress_tags=["randomized", "backpressure", "multi_tile"],
+        ),
+        _randomized_top_npu_stress_case(
+            case_name="randomized_flush_window_seed23",
+            random_seed=23,
+            tile_count=1,
+            rows=2,
+            cols=2,
+            depth=4,
+            compiled_program=compiled_program,
+            stress_tags=["randomized", "flush"],
+        ),
+        _randomized_top_npu_stress_case(
+            case_name="randomized_triple_tile_seed31",
+            random_seed=31,
+            tile_count=3,
+            rows=2,
+            cols=2,
+            depth=4,
+            compiled_program=compiled_program,
+            stress_tags=["randomized", "backpressure", "multi_tile", "flush"],
+        ),
+    ]
+
+
+def _randomized_top_npu_stress_case(
+    case_name: str,
+    random_seed: int,
+    tile_count: int,
+    rows: int,
+    cols: int,
+    depth: int,
+    compiled_program: Optional[Dict[str, object]],
+    stress_tags: List[str],
+) -> Dict[str, object]:
+    rng = random.Random(random_seed)
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
+    vectors["tile_enable_i"] = [1 if index < tile_count else 0 for index in range(tile_count)]
+    vectors["slot_count_i"] = 2 if "multi_tile" in stress_tags else 1
+    vectors["load_iterations_i"] = 2
+    vectors["compute_iterations_i"] = 3 if "flush" in stress_tags else 2
+    vectors["store_burst_count_i"] = 2 if rows > 1 else 1
+    vectors["clear_on_done_i"] = 1 if "flush" in stress_tags else 0
+    vectors["slot_stride_i"] = 1
+    vectors["store_stride_i"] = 1
+    vectors["activation_base_addr_i"] = 0
+    vectors["weight_base_addr_i"] = 0
+    vectors["result_base_addr_i"] = max(0, depth - int(vectors["store_burst_count_i"]))
+    vectors["activation_slot0_i"] = [rng.randint(1, 4), rng.randint(0, 3)]
+    vectors["activation_slot1_i"] = [rng.randint(1, 5), rng.randint(1, 4)]
+    vectors["weight_slot0_i"] = [rng.randint(2, 6), rng.randint(3, 7)]
+    vectors["weight_slot1_i"] = [rng.randint(4, 8), rng.randint(5, 9)]
+
+    total_steps = 14 if tile_count <= 2 else 16
+    starts = [1] + [0 for _ in range(total_steps - 1)]
+    steps = []
+    dma_stall_step = rng.choice([1, 2, 3])
+    load_stall_step = rng.choice([4, 5, 6])
+    store_stall_step = rng.choice([8, 9, 10])
+    secondary_store_stall_step = rng.choice([10, 11, 12])
+
+    for step_index, start_value in enumerate(starts):
+        payload = dict(vectors)
+        payload["start_i"] = start_value
+        payload["tile_dma_ready_i"] = [1 for _ in range(tile_count)]
+        payload["tile_load_ready_i"] = [1 for _ in range(tile_count)]
+        payload["store_ready_i"] = 1
+        if step_index == dma_stall_step:
+            payload["tile_dma_ready_i"] = [rng.randint(0, 1) for _ in range(tile_count)]
+            if sum(payload["tile_dma_ready_i"]) == tile_count:
+                payload["tile_dma_ready_i"][0] = 0
+        if step_index == load_stall_step:
+            payload["tile_load_ready_i"] = [rng.randint(0, 1) for _ in range(tile_count)]
+            if sum(payload["tile_load_ready_i"]) == tile_count:
+                payload["tile_load_ready_i"][-1] = 0
+        if step_index in {store_stall_step, secondary_store_stall_step}:
+            payload["store_ready_i"] = 0
+        steps.append(payload)
+
+    for payload, expected in zip(
+        steps,
+        top_npu_reference(
+            steps=steps,
+            rows=rows,
+            cols=cols,
+            depth=depth,
+            tile_count=tile_count,
+        ),
+    ):
+        payload["expected"] = expected
+
+    return {
+        "name": case_name,
+        "random_seed": random_seed,
+        "stress_tags": stress_tags,
+        "tile_count": tile_count,
+        "rows": rows,
+        "cols": cols,
+        "depth": depth,
+        "steps": steps,
+    }
+
+
 def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     return {
         "compiled_program": compiled_program or {},
@@ -4608,6 +4724,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
             _top_npu_dual_tile_sequence_case(compiled_program=compiled_program),
             _top_npu_backpressure_sequence_case(compiled_program=compiled_program),
         ],
+        "top_npu_stress": _top_npu_random_stress_cases(compiled_program=compiled_program),
     }
 
 

@@ -57,6 +57,7 @@ def _build_execution_report(
 
     payload = json.loads(Path(bundle.reference_cases_path).read_text(encoding="utf-8"))
     top_level_cases = payload.get("top_npu", [])
+    top_level_stress_cases = payload.get("top_npu_stress", [])
     if not top_level_cases:
         return {
             "available": False,
@@ -83,6 +84,7 @@ def _build_execution_report(
         operand_width_bits=bundle.operand_width_bits,
     )
     summary["compiled_program"] = payload.get("compiled_program", {})
+    summary["stress_verification"] = _build_stress_verification_summary(top_level_stress_cases)
     summary["requirement_profile"] = _build_requirement_profile(spec=spec, architecture=architecture)
     summary["workload_profile"] = _build_workload_profile(spec=spec, architecture=architecture)
 
@@ -93,6 +95,16 @@ def _build_execution_report(
         "primary_module": bundle.primary_module,
         "summary": summary,
         "cases": case_reports,
+        "stress_cases": [
+            {
+                "name": str(case.get("name", "")),
+                "random_seed": int(case.get("random_seed", 0)),
+                "tile_count": int(case.get("tile_count", 1)),
+                "step_count": len(case.get("steps", [])),
+                "stress_tags": [str(tag) for tag in case.get("stress_tags", [])],
+            }
+            for case in top_level_stress_cases
+        ],
     }
 
 
@@ -394,6 +406,16 @@ def _empty_summary() -> Dict[str, Any]:
             "peak_abs_psum": 0,
             "estimated_mac_operations": 0,
         },
+        "stress_verification": {
+            "stress_case_count": 0,
+            "stress_cycle_count": 0,
+            "covered_tags": [],
+            "backpressure_case_count": 0,
+            "flush_case_count": 0,
+            "multi_tile_case_count": 0,
+            "max_stress_tile_count": 0,
+            "case_names": [],
+        },
         "requirement_profile": None,
         "workload_profile": None,
     }
@@ -672,6 +694,34 @@ def _summarize_case_reports(
         seed_peak_macs_per_cycle=int(summary["compute_path"]["peak_valid_lanes"]),
     )
     return summary
+
+
+def _build_stress_verification_summary(stress_cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    covered_tags = sorted(
+        {
+            str(tag)
+            for case in stress_cases
+            for tag in case.get("stress_tags", [])
+        }
+    )
+    return {
+        "stress_case_count": len(stress_cases),
+        "stress_cycle_count": sum(len(case.get("steps", [])) for case in stress_cases),
+        "covered_tags": covered_tags,
+        "backpressure_case_count": sum(
+            1 for case in stress_cases if "backpressure" in case.get("stress_tags", [])
+        ),
+        "flush_case_count": sum(
+            1 for case in stress_cases if "flush" in case.get("stress_tags", [])
+        ),
+        "multi_tile_case_count": sum(
+            1 for case in stress_cases if int(case.get("tile_count", 1)) > 1
+        ),
+        "max_stress_tile_count": max(
+            [int(case.get("tile_count", 1)) for case in stress_cases] or [0]
+        ),
+        "case_names": [str(case.get("name", "")) for case in stress_cases],
+    }
 
 
 def _build_workload_profile(

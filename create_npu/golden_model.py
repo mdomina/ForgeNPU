@@ -483,6 +483,11 @@ def scheduler_reference(
     program_load_iterations = 2
     program_compute_iterations = 2
     program_clear_on_done = True
+    program_store_burst_count = 2
+    decoupled_mode = False
+    load_issued = 0
+    compute_issued = 0
+    store_issued = 0
     snapshots: List[Dict[str, object]] = []
 
     for step in steps:
@@ -496,6 +501,11 @@ def scheduler_reference(
             program_load_iterations,
             program_compute_iterations,
             program_clear_on_done,
+            program_store_burst_count,
+            decoupled_mode,
+            load_issued,
+            compute_issued,
+            store_issued,
         ) = _scheduler_next_context(
             state=state,
             slot_index=slot_index,
@@ -508,6 +518,11 @@ def scheduler_reference(
             program_load_iterations=program_load_iterations,
             program_compute_iterations=program_compute_iterations,
             program_clear_on_done=program_clear_on_done,
+            program_store_burst_count=program_store_burst_count,
+            decoupled_mode=decoupled_mode,
+            load_issued=load_issued,
+            compute_issued=compute_issued,
+            store_issued=store_issued,
         )
         snapshots.append(
             _scheduler_outputs(
@@ -519,6 +534,13 @@ def scheduler_reference(
                 load_index=load_index,
                 store_index=store_index,
                 program_slot_count=program_slot_count,
+                program_load_iterations=program_load_iterations,
+                program_compute_iterations=program_compute_iterations,
+                program_store_burst_count=program_store_burst_count,
+                decoupled_mode=decoupled_mode,
+                load_issued=load_issued,
+                compute_issued=compute_issued,
+                store_issued=store_issued,
             )
         )
 
@@ -619,6 +641,11 @@ def top_npu_context_reference(
     program_load_iterations = 2
     program_compute_iterations = 2
     program_clear_on_done = True
+    program_store_burst_count = 2
+    decoupled_mode = False
+    load_issued = 0
+    compute_issued = 0
+    store_issued = 0
     scheduler_snapshots: List[Dict[str, object]] = []
     control_snapshots: List[Dict[str, object]] = []
     idle_scheduler_snapshot = {
@@ -638,6 +665,11 @@ def top_npu_context_reference(
         "store_results_en_o": 0,
         "result_write_addr_o": 0,
         "store_burst_index_o": 0,
+        "decoupled_mode_o": 0,
+        "load_queue_depth_o": 0,
+        "execute_queue_depth_o": 0,
+        "store_queue_depth_o": 0,
+        "hazard_wait_o": 0,
     }
     idle_control_snapshot = _cluster_control_outputs(
         scheduler_snapshot=idle_scheduler_snapshot,
@@ -668,6 +700,11 @@ def top_npu_context_reference(
             program_load_iterations,
             program_compute_iterations,
             program_clear_on_done,
+            program_store_burst_count,
+            decoupled_mode,
+            load_issued,
+            compute_issued,
+            store_issued,
         ) = _scheduler_next_context(
             state=state,
             slot_index=slot_index,
@@ -680,6 +717,11 @@ def top_npu_context_reference(
             program_load_iterations=program_load_iterations,
             program_compute_iterations=program_compute_iterations,
             program_clear_on_done=program_clear_on_done,
+            program_store_burst_count=program_store_burst_count,
+            decoupled_mode=decoupled_mode,
+            load_issued=load_issued,
+            compute_issued=compute_issued,
+            store_issued=store_issued,
         )
         scheduler_snapshot = _scheduler_outputs(
             state=state,
@@ -690,6 +732,13 @@ def top_npu_context_reference(
             load_index=load_index,
             store_index=store_index,
             program_slot_count=program_slot_count,
+            program_load_iterations=program_load_iterations,
+            program_compute_iterations=program_compute_iterations,
+            program_store_burst_count=program_store_burst_count,
+            decoupled_mode=decoupled_mode,
+            load_issued=load_issued,
+            compute_issued=compute_issued,
+            store_issued=store_issued,
         )
         control_snapshot = _cluster_control_outputs(
             scheduler_snapshot=scheduler_snapshot,
@@ -996,6 +1045,11 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                 or observed["compute_en_o"] != expected["compute_en_o"]
                 or observed["flush_pipeline_o"] != expected["flush_pipeline_o"]
                 or observed["clear_acc_o"] != expected["clear_acc_o"]
+                or observed.get("decoupled_mode_o", 0) != expected.get("decoupled_mode_o", 0)
+                or observed.get("load_queue_depth_o", 0) != expected.get("load_queue_depth_o", 0)
+                or observed.get("execute_queue_depth_o", 0) != expected.get("execute_queue_depth_o", 0)
+                or observed.get("store_queue_depth_o", 0) != expected.get("store_queue_depth_o", 0)
+                or observed.get("hazard_wait_o", 0) != expected.get("hazard_wait_o", 0)
             ):
                 failures.append(
                     "scheduler/"
@@ -1007,7 +1061,9 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{expected['weight_read_addr_o']}, {expected['store_results_en_o']}, "
                     f"{expected['result_write_addr_o']}, {expected['store_burst_index_o']}, "
                     f"{expected['compute_en_o']}, {expected['flush_pipeline_o']}, "
-                    f"{expected['clear_acc_o']}), got "
+                    f"{expected['clear_acc_o']}, {expected.get('decoupled_mode_o', 0)}, "
+                    f"{expected.get('load_queue_depth_o', 0)}, {expected.get('execute_queue_depth_o', 0)}, "
+                    f"{expected.get('store_queue_depth_o', 0)}, {expected.get('hazard_wait_o', 0)}), got "
                     f"({observed['state_o']}, {observed['busy_o']}, {observed['done_o']}, "
                     f"{observed['dma_valid_o']}, {observed['dma_write_weights_o']}, "
                     f"{observed['dma_addr_o']}, {observed['dma_payload_o']}, "
@@ -1015,7 +1071,9 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['weight_read_addr_o']}, {observed['store_results_en_o']}, "
                     f"{observed['result_write_addr_o']}, {observed['store_burst_index_o']}, "
                     f"{observed['compute_en_o']}, {observed['flush_pipeline_o']}, "
-                    f"{observed['clear_acc_o']})"
+                    f"{observed['clear_acc_o']}, {observed.get('decoupled_mode_o', 0)}, "
+                    f"{observed.get('load_queue_depth_o', 0)}, {observed.get('execute_queue_depth_o', 0)}, "
+                    f"{observed.get('store_queue_depth_o', 0)}, {observed.get('hazard_wait_o', 0)})"
                 )
 
     for case in list(payload.get("cluster_control", [])) + list(payload.get("cluster_control_stress", [])):
@@ -1422,7 +1480,12 @@ def _scheduler_next_context(
     program_load_iterations: int,
     program_compute_iterations: int,
     program_clear_on_done: bool,
-) -> Tuple[int, int, int, int, int, int, int, int, bool]:
+    program_store_burst_count: int,
+    decoupled_mode: bool,
+    load_issued: int,
+    compute_issued: int,
+    store_issued: int,
+) -> Tuple[int, int, int, int, int, int, int, int, bool, int, bool, int, int, int]:
     store_burst_count = _sanitize_store_burst_count(
         step.get("store_burst_count_i", rows),
         rows=rows,
@@ -1430,268 +1493,174 @@ def _scheduler_next_context(
     dma_accept = _sanitize_accept(step.get("dma_accept_i", 1))
     load_accept = _sanitize_accept(step.get("load_accept_i", 1))
     store_accept = _sanitize_accept(step.get("store_accept_i", 1))
+    state_d = state
+    slot_index_d = slot_index
+    load_index_d = load_index
+    compute_index_d = compute_index
+    store_index_d = store_index
+    program_slot_count_d = program_slot_count
+    program_load_iterations_d = program_load_iterations
+    program_compute_iterations_d = program_compute_iterations
+    program_clear_on_done_d = program_clear_on_done
+    program_store_burst_count_d = program_store_burst_count
+    decoupled_mode_d = decoupled_mode
+    load_issued_d = load_issued
+    compute_issued_d = compute_issued
+    store_issued_d = store_issued
+
     if state == SCHEDULER_IDLE:
         if bool(step["start_i"]):
-            return (
-                SCHEDULER_DMA_ACT,
-                0,
-                0,
-                0,
-                0,
-                _sanitize_slot_count(step.get("slot_count_i", 2)),
-                _sanitize_load_iterations(step.get("load_iterations_i", 2)),
-                _sanitize_compute_iterations(step.get("compute_iterations_i", 2)),
-                bool(step.get("clear_on_done_i", 1)),
-            )
-        return (
-            SCHEDULER_IDLE,
-            slot_index,
-            load_index,
-            compute_index,
-            store_index,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_DMA_ACT:
-        if not dma_accept:
-            return (
-                SCHEDULER_DMA_ACT,
-                slot_index,
-                load_index,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_DMA_WGT,
-            slot_index,
-            load_index,
-            compute_index,
-            store_index,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_DMA_WGT:
-        if not dma_accept:
-            return (
-                SCHEDULER_DMA_WGT,
-                slot_index,
-                load_index,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        if slot_index + 1 < program_slot_count:
-            return (
-                SCHEDULER_DMA_ACT,
-                slot_index + 1,
-                load_index,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_LOAD,
-            slot_index,
-            0,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_LOAD:
-        if not load_accept:
-            return (
-                SCHEDULER_LOAD,
-                slot_index,
-                load_index,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        if load_index + 1 < program_load_iterations:
-            return (
-                SCHEDULER_LOAD,
-                slot_index,
-                load_index + 1,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        if program_compute_iterations > 0:
-            return (
-                SCHEDULER_COMPUTE,
-                slot_index,
-                load_index,
-                0,
-                0,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        if program_clear_on_done:
-            return (
-                SCHEDULER_CLEAR,
-                slot_index,
-                load_index,
-                compute_index,
-                0,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_DONE,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_COMPUTE:
-        if compute_index + 1 < program_compute_iterations:
-            return (
-                SCHEDULER_COMPUTE,
-                slot_index,
-                load_index,
-                compute_index + 1,
-                0,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_STORE,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_STORE:
-        if not store_accept:
-            return (
-                SCHEDULER_STORE,
-                slot_index,
-                load_index,
-                compute_index,
-                store_index,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        if store_index + 1 < store_burst_count:
-            return (
-                SCHEDULER_STORE,
-                slot_index,
-                load_index,
-                compute_index,
-                store_index + 1,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_FLUSH,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_FLUSH:
-        if program_clear_on_done:
-            return (
-                SCHEDULER_CLEAR,
-                slot_index,
-                load_index,
-                compute_index,
-                0,
-                program_slot_count,
-                program_load_iterations,
-                program_compute_iterations,
-                program_clear_on_done,
-            )
-        return (
-            SCHEDULER_DONE,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_CLEAR:
-        return (
-            SCHEDULER_DONE,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
-    if state == SCHEDULER_DONE:
-        return (
-            SCHEDULER_IDLE,
-            slot_index,
-            load_index,
-            compute_index,
-            0,
-            program_slot_count,
-            program_load_iterations,
-            program_compute_iterations,
-            program_clear_on_done,
-        )
+            state_d = SCHEDULER_DMA_ACT
+            slot_index_d = 0
+            load_index_d = 0
+            compute_index_d = 0
+            store_index_d = 0
+            program_slot_count_d = _sanitize_slot_count(step.get("slot_count_i", 2))
+            program_load_iterations_d = _sanitize_load_iterations(step.get("load_iterations_i", 2))
+            program_compute_iterations_d = _sanitize_compute_iterations(step.get("compute_iterations_i", 2))
+            program_clear_on_done_d = bool(step.get("clear_on_done_i", 1))
+            program_store_burst_count_d = store_burst_count
+            decoupled_mode_d = bool(step.get("decoupled_mode_i", 0))
+            load_issued_d = 0
+            compute_issued_d = 0
+            store_issued_d = 0
+    elif not decoupled_mode:
+        if state == SCHEDULER_DMA_ACT:
+            if dma_accept:
+                state_d = SCHEDULER_DMA_WGT
+        elif state == SCHEDULER_DMA_WGT:
+            if dma_accept:
+                if slot_index + 1 < program_slot_count:
+                    slot_index_d = slot_index + 1
+                    state_d = SCHEDULER_DMA_ACT
+                else:
+                    load_index_d = 0
+                    store_index_d = 0
+                    state_d = SCHEDULER_LOAD
+        elif state == SCHEDULER_LOAD:
+            if load_accept:
+                load_issued_d = load_issued + 1
+                if load_index + 1 < program_load_iterations:
+                    load_index_d = load_index + 1
+                    state_d = SCHEDULER_LOAD
+                elif program_compute_iterations > 0:
+                    compute_index_d = 0
+                    store_index_d = 0
+                    state_d = SCHEDULER_COMPUTE
+                elif program_clear_on_done:
+                    state_d = SCHEDULER_CLEAR
+                else:
+                    state_d = SCHEDULER_DONE
+        elif state == SCHEDULER_COMPUTE:
+            compute_issued_d = compute_issued + 1
+            if compute_index + 1 < program_compute_iterations:
+                compute_index_d = compute_index + 1
+                state_d = SCHEDULER_COMPUTE
+            else:
+                store_index_d = 0
+                state_d = SCHEDULER_STORE
+        elif state == SCHEDULER_STORE:
+            if store_accept:
+                store_issued_d = store_issued + 1
+                if store_index + 1 < store_burst_count:
+                    store_index_d = store_index + 1
+                    state_d = SCHEDULER_STORE
+                else:
+                    store_index_d = 0
+                    state_d = SCHEDULER_FLUSH
+        elif state == SCHEDULER_FLUSH:
+            state_d = SCHEDULER_CLEAR if program_clear_on_done else SCHEDULER_DONE
+        elif state == SCHEDULER_CLEAR:
+            store_index_d = 0
+            state_d = SCHEDULER_DONE
+        elif state == SCHEDULER_DONE:
+            store_index_d = 0
+            state_d = SCHEDULER_IDLE
+    else:
+        if state == SCHEDULER_DMA_ACT:
+            if dma_accept:
+                state_d = SCHEDULER_DMA_WGT
+        elif state == SCHEDULER_DMA_WGT:
+            if dma_accept:
+                if slot_index + 1 < program_slot_count:
+                    slot_index_d = slot_index + 1
+                    state_d = SCHEDULER_DMA_ACT
+                else:
+                    load_index_d = 0
+                    compute_index_d = 0
+                    store_index_d = 0
+                    state_d = SCHEDULER_LOAD
+        elif state == SCHEDULER_LOAD:
+            if load_issued < program_load_iterations and load_accept:
+                load_issued_d = load_issued + 1
+                load_index_d = load_issued_d
+            if compute_issued < program_compute_iterations and load_issued > compute_issued:
+                compute_issued_d = compute_issued + 1
+                compute_index_d = compute_issued_d
+            if (
+                store_issued < program_store_burst_count
+                and compute_issued > store_issued
+                and store_accept
+            ):
+                store_issued_d = store_issued + 1
+                store_index_d = store_issued_d
+            if load_issued_d >= program_load_iterations:
+                if program_compute_iterations == 0:
+                    state_d = SCHEDULER_CLEAR if program_clear_on_done else SCHEDULER_DONE
+                elif compute_issued_d < program_compute_iterations:
+                    state_d = SCHEDULER_COMPUTE
+                elif store_issued_d < program_store_burst_count:
+                    state_d = SCHEDULER_STORE
+                else:
+                    state_d = SCHEDULER_FLUSH
+        elif state == SCHEDULER_COMPUTE:
+            if compute_issued < program_compute_iterations and load_issued > compute_issued:
+                compute_issued_d = compute_issued + 1
+                compute_index_d = compute_issued_d
+            if (
+                store_issued < program_store_burst_count
+                and compute_issued > store_issued
+                and store_accept
+            ):
+                store_issued_d = store_issued + 1
+                store_index_d = store_issued_d
+            if compute_issued_d >= program_compute_iterations:
+                if store_issued_d < program_store_burst_count:
+                    state_d = SCHEDULER_STORE
+                else:
+                    state_d = SCHEDULER_FLUSH
+        elif state == SCHEDULER_STORE:
+            if (
+                store_issued < program_store_burst_count
+                and compute_issued > store_issued
+                and store_accept
+            ):
+                store_issued_d = store_issued + 1
+                store_index_d = store_issued_d
+            if store_issued_d >= program_store_burst_count:
+                state_d = SCHEDULER_FLUSH
+        elif state == SCHEDULER_FLUSH:
+            state_d = SCHEDULER_CLEAR if program_clear_on_done else SCHEDULER_DONE
+        elif state == SCHEDULER_CLEAR:
+            state_d = SCHEDULER_DONE
+        elif state == SCHEDULER_DONE:
+            state_d = SCHEDULER_IDLE
+
     return (
-        SCHEDULER_IDLE,
-        slot_index,
-        load_index,
-        compute_index,
-        0,
-        program_slot_count,
-        program_load_iterations,
-        program_compute_iterations,
-        program_clear_on_done,
+        state_d,
+        slot_index_d,
+        load_index_d,
+        compute_index_d,
+        store_index_d,
+        program_slot_count_d,
+        program_load_iterations_d,
+        program_compute_iterations_d,
+        program_clear_on_done_d,
+        program_store_burst_count_d,
+        decoupled_mode_d,
+        load_issued_d,
+        compute_issued_d,
+        store_issued_d,
     )
 
 
@@ -1704,6 +1673,13 @@ def _scheduler_outputs(
     load_index: int,
     store_index: int,
     program_slot_count: int,
+    program_load_iterations: int,
+    program_compute_iterations: int,
+    program_store_burst_count: int,
+    decoupled_mode: bool,
+    load_issued: int,
+    compute_issued: int,
+    store_issued: int,
 ) -> Dict[str, object]:
     max_dim = max(rows, cols)
     slot_stride = _sanitize_stride(step.get("slot_stride_i", 1))
@@ -1724,7 +1700,18 @@ def _scheduler_outputs(
         "compute_en_o": 0,
         "flush_pipeline_o": 0,
         "clear_acc_o": 0,
+        "decoupled_mode_o": int(decoupled_mode),
+        "load_queue_depth_o": max(0, int(program_load_iterations) - int(load_issued)),
+        "execute_queue_depth_o": max(0, int(load_issued) - int(compute_issued)),
+        "store_queue_depth_o": max(0, int(compute_issued) - int(store_issued)),
+        "hazard_wait_o": 0,
     }
+
+    if decoupled_mode and state in (SCHEDULER_LOAD, SCHEDULER_COMPUTE, SCHEDULER_STORE):
+        if (compute_issued < program_compute_iterations) and not (load_issued > compute_issued):
+            snapshot["hazard_wait_o"] = 1
+        if (store_issued < program_store_burst_count) and not (compute_issued > store_issued):
+            snapshot["hazard_wait_o"] = 1
 
     if state == SCHEDULER_DMA_ACT:
         snapshot["dma_valid_o"] = 1
@@ -1748,7 +1735,7 @@ def _scheduler_outputs(
         snapshot["activation_read_addr_o"] = _descriptor_addr(
             base_addr=step.get("activation_base_addr_i", 0),
             index=_effective_load_addr(
-                load_index=load_index,
+                load_index=load_issued if decoupled_mode else load_index,
                 program_slot_count=program_slot_count,
             ),
             stride=slot_stride,
@@ -1756,21 +1743,45 @@ def _scheduler_outputs(
         snapshot["weight_read_addr_o"] = _descriptor_addr(
             base_addr=step.get("weight_base_addr_i", 0),
             index=_effective_load_addr(
-                load_index=load_index,
+                load_index=load_issued if decoupled_mode else load_index,
                 program_slot_count=program_slot_count,
             ),
             stride=slot_stride,
         )
+        if decoupled_mode and load_issued > compute_issued and compute_issued < int(
+            step.get("compute_iterations_i", 0)
+        ):
+            snapshot["compute_en_o"] = 1
+        if decoupled_mode and compute_issued > store_issued and store_issued < program_store_burst_count:
+            snapshot["store_results_en_o"] = 1
+            snapshot["result_write_addr_o"] = _descriptor_addr(
+                base_addr=step.get("result_base_addr_i", 0),
+                index=store_issued,
+                stride=_sanitize_stride(step.get("store_stride_i", 1)),
+            )
+            snapshot["store_burst_index_o"] = store_issued
     elif state == SCHEDULER_COMPUTE:
-        snapshot["compute_en_o"] = 1
+        if not decoupled_mode or (
+            load_issued > compute_issued
+            and compute_issued < int(step.get("compute_iterations_i", 0))
+        ):
+            snapshot["compute_en_o"] = 1
+        if decoupled_mode and compute_issued > store_issued and store_issued < program_store_burst_count:
+            snapshot["store_results_en_o"] = 1
+            snapshot["result_write_addr_o"] = _descriptor_addr(
+                base_addr=step.get("result_base_addr_i", 0),
+                index=store_issued,
+                stride=_sanitize_stride(step.get("store_stride_i", 1)),
+            )
+            snapshot["store_burst_index_o"] = store_issued
     elif state == SCHEDULER_STORE:
         snapshot["store_results_en_o"] = 1
         snapshot["result_write_addr_o"] = _descriptor_addr(
             base_addr=step.get("result_base_addr_i", 0),
-            index=store_index,
+            index=store_issued if decoupled_mode else store_index,
             stride=_sanitize_stride(step.get("store_stride_i", 1)),
         )
-        snapshot["store_burst_index_o"] = store_index
+        snapshot["store_burst_index_o"] = store_issued if decoupled_mode else store_index
     elif state == SCHEDULER_FLUSH:
         snapshot["flush_pipeline_o"] = 1
     elif state == SCHEDULER_CLEAR:

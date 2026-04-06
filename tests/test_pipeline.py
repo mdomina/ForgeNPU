@@ -1274,6 +1274,88 @@ class PipelineTest(unittest.TestCase):
                 tile_case_names,
             )
 
+    def test_pipeline_emits_decoupled_scheduler_reference_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 6 TOPS per dense GEMM con batch 1-2.",
+                num_candidates=1,
+            )
+
+            verification_vectors = json.loads(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "verification_vectors.json"
+                ).read_text(encoding="utf-8")
+            )
+            scheduler_case = next(
+                case
+                for case in verification_vectors["scheduler"]
+                if case["name"] == "decoupled_overlap_with_hazard_tracking"
+            )
+            self.assertTrue(
+                any(
+                    int(step["expected"]["load_vector_en_o"])
+                    and int(step["expected"]["compute_en_o"])
+                    for step in scheduler_case["steps"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    int(step["expected"]["store_results_en_o"])
+                    and int(step["expected"]["compute_en_o"])
+                    for step in scheduler_case["steps"]
+                )
+            )
+            self.assertTrue(
+                any(int(step["expected"].get("hazard_wait_o", 0)) for step in scheduler_case["steps"])
+            )
+            self.assertTrue(
+                any(
+                    int(step["expected"].get("decoupled_mode_o", 0))
+                    and int(step["expected"].get("execute_queue_depth_o", 0)) > 0
+                    for step in scheduler_case["steps"]
+                )
+            )
+
+    def test_pipeline_report_exposes_scheduler_overlap_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
+            result = pipeline.run(
+                "Voglio una NPU INT8 da 6 TOPS per dense GEMM con batch 1-2.",
+                num_candidates=1,
+            )
+
+            report_payload = json.loads(Path(result.report["path"]).read_text(encoding="utf-8"))
+            self.assertIn("scheduler_queue_metrics", report_payload["summary"])
+            self.assertIn("overlap_metrics", report_payload["summary"])
+            self.assertIn("scheduler_status", report_payload["cases"][0]["trace"][0])
+            self.assertIn("hazard_wait", report_payload["cases"][0]["trace"][0]["scheduler_status"])
+            self.assertIn("load_queue_depth", report_payload["cases"][0]["trace"][0]["scheduler_status"])
+            self.assertIn("store_queue_depth", report_payload["cases"][0]["trace"][0]["scheduler_status"])
+            self.assertGreaterEqual(
+                report_payload["summary"]["scheduler_queue_metrics"]["max_load_queue_depth"],
+                0,
+            )
+            self.assertGreaterEqual(
+                report_payload["summary"]["scheduler_queue_metrics"]["max_execute_queue_depth"],
+                0,
+            )
+            self.assertGreaterEqual(
+                report_payload["summary"]["scheduler_queue_metrics"]["max_store_queue_depth"],
+                0,
+            )
+            self.assertGreaterEqual(
+                report_payload["summary"]["overlap_metrics"]["memory_compute_overlap_cycles"],
+                report_payload["summary"]["overlap_metrics"]["dma_compute_overlap_cycles"],
+            )
+            self.assertGreaterEqual(
+                report_payload["summary"]["overlap_metrics"]["memory_compute_overlap_cycles"],
+                report_payload["summary"]["overlap_metrics"]["load_compute_overlap_cycles"],
+            )
+
     def test_pipeline_archives_dataset_samples(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             base_output_dir = Path(temp_dir)

@@ -2337,6 +2337,7 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
   input  logic [ADDR_WIDTH-1:0] store_stride_i,
   input  logic [1:0] store_burst_count_i,
   input  logic clear_on_done_i,
+  input  logic decoupled_mode_i,
   input  logic dma_accept_i,
   input  logic load_accept_i,
   input  logic store_accept_i,
@@ -2359,7 +2360,11 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
   output logic clear_acc_o,
   output logic busy_o,
   output logic done_o,
-  output logic [3:0] state_o
+  output logic [3:0] state_o,
+  output logic [3:0] load_queue_depth_o,
+  output logic [3:0] execute_queue_depth_o,
+  output logic [3:0] store_queue_depth_o,
+  output logic hazard_wait_o
 );
   localparam logic [3:0] S_IDLE = 4'd0;
   localparam logic [3:0] S_DMA_ACT = 4'd1;
@@ -2388,13 +2393,23 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
   logic [1:0] program_load_iterations_d;
   logic [3:0] program_compute_iterations_q;
   logic [3:0] program_compute_iterations_d;
+  logic [1:0] program_store_burst_count_q;
+  logic [1:0] program_store_burst_count_d;
   logic program_clear_on_done_q;
   logic program_clear_on_done_d;
+  logic decoupled_mode_q;
+  logic decoupled_mode_d;
   logic [1:0] slot_count_sanitized;
   logic [1:0] load_iterations_sanitized;
   logic [1:0] store_burst_count_sanitized;
   logic [ADDR_WIDTH-1:0] slot_stride_sanitized;
   logic [ADDR_WIDTH-1:0] store_stride_sanitized;
+  logic [3:0] load_issued_q;
+  logic [3:0] load_issued_d;
+  logic [3:0] compute_issued_q;
+  logic [3:0] compute_issued_d;
+  logic [3:0] store_issued_q;
+  logic [3:0] store_issued_d;
 
   function automatic logic [ADDR_WIDTH-1:0] descriptor_addr(
     input logic [ADDR_WIDTH-1:0] base_addr,
@@ -2463,7 +2478,12 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
     program_slot_count_d = program_slot_count_q;
     program_load_iterations_d = program_load_iterations_q;
     program_compute_iterations_d = program_compute_iterations_q;
+    program_store_burst_count_d = program_store_burst_count_q;
     program_clear_on_done_d = program_clear_on_done_q;
+    decoupled_mode_d = decoupled_mode_q;
+    load_issued_d = load_issued_q;
+    compute_issued_d = compute_issued_q;
+    store_issued_d = store_issued_q;
 
     unique case (state_q)
       S_IDLE: begin
@@ -2476,7 +2496,12 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
           program_slot_count_d = slot_count_sanitized;
           program_load_iterations_d = load_iterations_sanitized;
           program_compute_iterations_d = compute_iterations_i;
+          program_store_burst_count_d = store_burst_count_sanitized;
           program_clear_on_done_d = clear_on_done_i;
+          decoupled_mode_d = decoupled_mode_i;
+          load_issued_d = '0;
+          compute_issued_d = '0;
+          store_issued_d = '0;
         end
       end
       S_DMA_ACT: begin
@@ -2492,42 +2517,106 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
           end else begin
             load_index_d = ADDR_ZERO;
             store_index_d = ADDR_ZERO;
+            compute_count_d = '0;
             state_d = S_LOAD;
           end
         end
       end
       S_LOAD: begin
-        if (load_accept_i) begin
-          if ((load_index_q + 1'b1) < program_load_iterations_q) begin
-            load_index_d = load_index_q + 1'b1;
-            state_d = S_LOAD;
-          end else if (program_compute_iterations_q != 4'd0) begin
-            compute_count_d = '0;
-            store_index_d = ADDR_ZERO;
-            state_d = S_COMPUTE;
-          end else if (program_clear_on_done_q) begin
-            state_d = S_CLEAR;
-          end else begin
-            state_d = S_DONE;
+        if (!decoupled_mode_q) begin
+          if (load_accept_i) begin
+            load_issued_d = load_issued_q + 1'b1;
+            if ((load_index_q + 1'b1) < program_load_iterations_q) begin
+              load_index_d = load_index_q + 1'b1;
+              state_d = S_LOAD;
+            end else if (program_compute_iterations_q != 4'd0) begin
+              compute_count_d = '0;
+              store_index_d = ADDR_ZERO;
+              state_d = S_COMPUTE;
+            end else if (program_clear_on_done_q) begin
+              state_d = S_CLEAR;
+            end else begin
+              state_d = S_DONE;
+            end
+          end
+        end else begin
+          if ((load_issued_q < {{2'b00, program_load_iterations_q}}) && load_accept_i) begin
+            load_issued_d = load_issued_q + 1'b1;
+            load_index_d = load_issued_d;
+          end
+          if ((compute_issued_q < program_compute_iterations_q) && (load_issued_q > compute_issued_q)) begin
+            compute_issued_d = compute_issued_q + 1'b1;
+            compute_count_d = compute_issued_d;
+          end
+          if ((store_issued_q < {{2'b00, program_store_burst_count_q}}) &&
+              (compute_issued_q > store_issued_q) &&
+              store_accept_i) begin
+            store_issued_d = store_issued_q + 1'b1;
+            store_index_d = store_issued_d;
+          end
+          if (load_issued_d >= {{2'b00, program_load_iterations_q}}) begin
+            if (program_compute_iterations_q == 4'd0) begin
+              state_d = program_clear_on_done_q ? S_CLEAR : S_DONE;
+            end else if (compute_issued_d < program_compute_iterations_q) begin
+              state_d = S_COMPUTE;
+            end else if (store_issued_d < {{2'b00, program_store_burst_count_q}}) begin
+              state_d = S_STORE;
+            end else begin
+              state_d = S_FLUSH;
+            end
           end
         end
       end
       S_COMPUTE: begin
-        if ((compute_count_q + 1'b1) < program_compute_iterations_q) begin
-          compute_count_d = compute_count_q + 1'b1;
-          state_d = S_COMPUTE;
+        if (!decoupled_mode_q) begin
+          compute_issued_d = compute_issued_q + 1'b1;
+          if ((compute_count_q + 1'b1) < program_compute_iterations_q) begin
+            compute_count_d = compute_count_q + 1'b1;
+            state_d = S_COMPUTE;
+          end else begin
+            store_index_d = ADDR_ZERO;
+            state_d = S_STORE;
+          end
         end else begin
-          store_index_d = ADDR_ZERO;
-          state_d = S_STORE;
+          if ((compute_issued_q < program_compute_iterations_q) && (load_issued_q > compute_issued_q)) begin
+            compute_issued_d = compute_issued_q + 1'b1;
+            compute_count_d = compute_issued_d;
+          end
+          if ((store_issued_q < {{2'b00, program_store_burst_count_q}}) &&
+              (compute_issued_q > store_issued_q) &&
+              store_accept_i) begin
+            store_issued_d = store_issued_q + 1'b1;
+            store_index_d = store_issued_d;
+          end
+          if (compute_issued_d >= program_compute_iterations_q) begin
+            if (store_issued_d < {{2'b00, program_store_burst_count_q}}) begin
+              state_d = S_STORE;
+            end else begin
+              state_d = S_FLUSH;
+            end
+          end
         end
       end
       S_STORE: begin
-        if (store_accept_i) begin
-          if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
-            store_index_d = store_index_q + 1'b1;
-            state_d = S_STORE;
-          end else begin
-            store_index_d = ADDR_ZERO;
+        if (!decoupled_mode_q) begin
+          if (store_accept_i) begin
+            store_issued_d = store_issued_q + 1'b1;
+            if ((store_index_q + 1'b1) < store_burst_count_sanitized[ADDR_WIDTH-1:0]) begin
+              store_index_d = store_index_q + 1'b1;
+              state_d = S_STORE;
+            end else begin
+              store_index_d = ADDR_ZERO;
+              state_d = S_FLUSH;
+            end
+          end
+        end else begin
+          if ((store_issued_q < {{2'b00, program_store_burst_count_q}}) &&
+              (compute_issued_q > store_issued_q) &&
+              store_accept_i) begin
+            store_issued_d = store_issued_q + 1'b1;
+            store_index_d = store_issued_d;
+          end
+          if (store_issued_d >= {{2'b00, program_store_burst_count_q}}) begin
             state_d = S_FLUSH;
           end
         end
@@ -2561,7 +2650,12 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
       program_slot_count_q <= 2'd2;
       program_load_iterations_q <= 2'd2;
       program_compute_iterations_q <= 4'd2;
+      program_store_burst_count_q <= 2'd2;
       program_clear_on_done_q <= 1'b1;
+      decoupled_mode_q <= 1'b0;
+      load_issued_q <= '0;
+      compute_issued_q <= '0;
+      store_issued_q <= '0;
     end else begin
       state_q <= state_d;
       slot_index_q <= slot_index_d;
@@ -2571,7 +2665,12 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
       program_slot_count_q <= program_slot_count_d;
       program_load_iterations_q <= program_load_iterations_d;
       program_compute_iterations_q <= program_compute_iterations_d;
+      program_store_burst_count_q <= program_store_burst_count_d;
       program_clear_on_done_q <= program_clear_on_done_d;
+      decoupled_mode_q <= decoupled_mode_d;
+      load_issued_q <= load_issued_d;
+      compute_issued_q <= compute_issued_d;
+      store_issued_q <= store_issued_d;
     end
   end
 
@@ -2592,6 +2691,28 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
     busy_o = (state_q != S_IDLE) && (state_q != S_DONE);
     done_o = (state_q == S_DONE);
     state_o = state_q;
+    load_queue_depth_o =
+      ({{2'b00, program_load_iterations_q}} > load_issued_q)
+        ? ({{2'b00, program_load_iterations_q}} - load_issued_q)
+        : 4'd0;
+    execute_queue_depth_o =
+      (load_issued_q > compute_issued_q)
+        ? (load_issued_q - compute_issued_q)
+        : 4'd0;
+    store_queue_depth_o =
+      (compute_issued_q > store_issued_q)
+        ? (compute_issued_q - store_issued_q)
+        : 4'd0;
+    hazard_wait_o = 1'b0;
+
+    if (decoupled_mode_q && (state_q == S_LOAD || state_q == S_COMPUTE || state_q == S_STORE)) begin
+      if ((compute_issued_q < program_compute_iterations_q) && !(load_issued_q > compute_issued_q)) begin
+        hazard_wait_o = 1'b1;
+      end
+      if ((store_issued_q < {{2'b00, program_store_burst_count_q}}) && !(compute_issued_q > store_issued_q)) begin
+        hazard_wait_o = 1'b1;
+      end
+    end
 
     unique case (state_q)
       S_DMA_ACT: begin
@@ -2621,23 +2742,58 @@ def _scheduler_template(operand_width: int, seed_rows: int, seed_cols: int) -> s
         end else begin
           activation_read_addr_o = descriptor_addr(
             activation_base_addr_i,
-            load_index_q,
+            decoupled_mode_q ? load_issued_q[ADDR_WIDTH-1:0] : load_index_q,
             slot_stride_sanitized
           );
           weight_read_addr_o = descriptor_addr(
             weight_base_addr_i,
-            load_index_q,
+            decoupled_mode_q ? load_issued_q[ADDR_WIDTH-1:0] : load_index_q,
             slot_stride_sanitized
           );
         end
+        if (decoupled_mode_q &&
+            (load_issued_q > compute_issued_q) &&
+            (compute_issued_q < program_compute_iterations_q)) begin
+          compute_en_o = 1'b1;
+        end
+        if (decoupled_mode_q &&
+            (compute_issued_q > store_issued_q) &&
+            (store_issued_q < {{2'b00, program_store_burst_count_q}})) begin
+          store_results_en_o = 1'b1;
+          result_write_addr_o = descriptor_addr(
+            result_base_addr_i,
+            store_issued_q[ADDR_WIDTH-1:0],
+            store_stride_sanitized
+          );
+          store_burst_index_o = store_issued_q[ADDR_WIDTH-1:0];
+        end
       end
       S_COMPUTE: begin
-        compute_en_o = 1'b1;
+        if (!decoupled_mode_q ||
+            ((load_issued_q > compute_issued_q) &&
+             (compute_issued_q < program_compute_iterations_q))) begin
+          compute_en_o = 1'b1;
+        end
+        if (decoupled_mode_q &&
+            (compute_issued_q > store_issued_q) &&
+            (store_issued_q < {{2'b00, program_store_burst_count_q}})) begin
+          store_results_en_o = 1'b1;
+          result_write_addr_o = descriptor_addr(
+            result_base_addr_i,
+            store_issued_q[ADDR_WIDTH-1:0],
+            store_stride_sanitized
+          );
+          store_burst_index_o = store_issued_q[ADDR_WIDTH-1:0];
+        end
       end
       S_STORE: begin
         store_results_en_o = 1'b1;
-        result_write_addr_o = descriptor_addr(result_base_addr_i, store_index_q, store_stride_sanitized);
-        store_burst_index_o = store_index_q;
+        result_write_addr_o = descriptor_addr(
+          result_base_addr_i,
+          decoupled_mode_q ? store_issued_q[ADDR_WIDTH-1:0] : store_index_q,
+          store_stride_sanitized
+        );
+        store_burst_index_o = decoupled_mode_q ? store_issued_q[ADDR_WIDTH-1:0] : store_index_q;
       end
       S_FLUSH: begin
         flush_pipeline_o = 1'b1;
@@ -2656,6 +2812,7 @@ endmodule
 def _scheduler_tb_template(operand_width: int) -> str:
     primary_case = _scheduler_sequence_case()
     short_case = _scheduler_short_sequence_case()
+    decoupled_case = _scheduler_decoupled_overlap_case()
     return f"""module scheduler_tb;
   localparam int DATA_WIDTH = {operand_width};
   localparam int ROWS = 2;
@@ -2686,6 +2843,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic [ADDR_WIDTH-1:0] store_stride_i;
   logic [1:0] store_burst_count_i;
   logic clear_on_done_i;
+  logic decoupled_mode_i;
   logic dma_accept_i;
   logic load_accept_i;
   logic store_accept_i;
@@ -2709,6 +2867,10 @@ def _scheduler_tb_template(operand_width: int) -> str:
   logic busy_o;
   logic done_o;
   logic [3:0] state_o;
+  logic [3:0] load_queue_depth_o;
+  logic [3:0] execute_queue_depth_o;
+  logic [3:0] store_queue_depth_o;
+  logic hazard_wait_o;
 
   scheduler #(
     .DATA_WIDTH(DATA_WIDTH),
@@ -2729,6 +2891,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .store_stride_i(store_stride_i),
     .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
+    .decoupled_mode_i(decoupled_mode_i),
     .dma_accept_i(dma_accept_i),
     .load_accept_i(load_accept_i),
     .store_accept_i(store_accept_i),
@@ -2751,7 +2914,11 @@ def _scheduler_tb_template(operand_width: int) -> str:
     .clear_acc_o(clear_acc_o),
     .busy_o(busy_o),
     .done_o(done_o),
-    .state_o(state_o)
+    .state_o(state_o),
+    .load_queue_depth_o(load_queue_depth_o),
+    .execute_queue_depth_o(execute_queue_depth_o),
+    .store_queue_depth_o(store_queue_depth_o),
+    .hazard_wait_o(hazard_wait_o)
   );
 
   always #5 clk = ~clk;
@@ -2774,7 +2941,11 @@ def _scheduler_tb_template(operand_width: int) -> str:
     input integer expected_store_burst_index,
     input logic expected_compute,
     input logic expected_flush,
-    input logic expected_clear
+    input logic expected_clear,
+    input integer expected_load_queue_depth,
+    input integer expected_execute_queue_depth,
+    input integer expected_store_queue_depth,
+    input logic expected_hazard_wait
   );
     begin
       start_i = start_value;
@@ -2796,7 +2967,11 @@ def _scheduler_tb_template(operand_width: int) -> str:
           store_burst_index_o !== expected_store_burst_index[ADDR_WIDTH-1:0] ||
           compute_en_o !== expected_compute ||
           flush_pipeline_o !== expected_flush ||
-          clear_acc_o !== expected_clear) begin
+          clear_acc_o !== expected_clear ||
+          load_queue_depth_o !== expected_load_queue_depth[3:0] ||
+          execute_queue_depth_o !== expected_execute_queue_depth[3:0] ||
+          store_queue_depth_o !== expected_store_queue_depth[3:0] ||
+          hazard_wait_o !== expected_hazard_wait) begin
         $fatal(1, "scheduler_tb failed");
       end
       start_i = 1'b0;
@@ -2817,6 +2992,7 @@ def _scheduler_tb_template(operand_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b1;
+    decoupled_mode_i = 1'b0;
     dma_accept_i = 1'b1;
     load_accept_i = 1'b1;
     store_accept_i = 1'b1;
@@ -2847,8 +3023,30 @@ def _scheduler_tb_template(operand_width: int) -> str:
     store_stride_i = 1;
     store_burst_count_i = 2'd2;
     clear_on_done_i = 1'b0;
+    decoupled_mode_i = 1'b0;
 
 {_render_scheduler_tb_steps(short_case)}
+
+    rst_n = 1'b0;
+    start_i = 1'b0;
+    slot_count_i = 2'd1;
+    load_iterations_i = 2'd2;
+    compute_iterations_i = 4'd2;
+    activation_base_addr_i = '0;
+    weight_base_addr_i = '0;
+    result_base_addr_i = 2;
+    slot_stride_i = 1;
+    store_stride_i = 1;
+    store_burst_count_i = 2'd2;
+    clear_on_done_i = 1'b1;
+    decoupled_mode_i = 1'b1;
+    dma_accept_i = 1'b1;
+    load_accept_i = 1'b1;
+    store_accept_i = 1'b1;
+    repeat (2) @(posedge clk);
+    rst_n = 1'b1;
+
+{_render_scheduler_tb_steps(decoupled_case)}
 
     $display("scheduler_tb passed");
     $finish;
@@ -3508,6 +3706,10 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
   logic compute_en;
   logic flush_pipeline;
   logic clear_acc;
+  logic [3:0] scheduler_load_queue_depth_unused;
+  logic [3:0] scheduler_execute_queue_depth_unused;
+  logic [3:0] scheduler_store_queue_depth_unused;
+  logic scheduler_hazard_wait_unused;
   logic [TILE_COUNT-1:0] control_tile_dma_valid;
   logic control_dma_write_weights;
   logic control_dma_bank_select;
@@ -3570,6 +3772,7 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .store_stride_i(store_stride_i),
     .store_burst_count_i(store_burst_count_i),
     .clear_on_done_i(clear_on_done_i),
+    .decoupled_mode_i(1'b0),
     .dma_accept_i(dma_accept),
     .load_accept_i(load_accept),
     .store_accept_i(store_accept),
@@ -3592,7 +3795,11 @@ def _top_npu_template(operand_width: int, acc_width: int, seed_rows: int, seed_c
     .clear_acc_o(clear_acc),
     .busy_o(busy_o),
     .done_o(done_o),
-    .state_o(scheduler_state_o)
+    .state_o(scheduler_state_o),
+    .load_queue_depth_o(scheduler_load_queue_depth_unused),
+    .execute_queue_depth_o(scheduler_execute_queue_depth_unused),
+    .store_queue_depth_o(scheduler_store_queue_depth_unused),
+    .hazard_wait_o(scheduler_hazard_wait_unused)
   );
 
   cluster_control #(
@@ -4237,6 +4444,14 @@ def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
     for step in case["steps"]:
         expected = step["expected"]
         payload = list(expected["dma_payload_o"]) + [0, 0]
+        if "decoupled_mode_i" in step:
+            lines.append(f"    decoupled_mode_i = 1'b{int(step['decoupled_mode_i'])};")
+        if "dma_accept_i" in step:
+            lines.append(f"    dma_accept_i = 1'b{int(step['dma_accept_i'])};")
+        if "load_accept_i" in step:
+            lines.append(f"    load_accept_i = 1'b{int(step['load_accept_i'])};")
+        if "store_accept_i" in step:
+            lines.append(f"    store_accept_i = 1'b{int(step['store_accept_i'])};")
         lines.append(
             "    step_and_expect("
             f"1'b{int(step['start_i'])}, "
@@ -4256,7 +4471,11 @@ def _render_scheduler_tb_steps(case: Dict[str, object]) -> str:
             f"{int(expected['store_burst_index_o'])}, "
             f"1'b{int(expected['compute_en_o'])}, "
             f"1'b{int(expected.get('flush_pipeline_o', 0))}, "
-            f"1'b{int(expected['clear_acc_o'])}"
+            f"1'b{int(expected['clear_acc_o'])}, "
+            f"{int(expected.get('load_queue_depth_o', 0))}, "
+            f"{int(expected.get('execute_queue_depth_o', 0))}, "
+            f"{int(expected.get('store_queue_depth_o', 0))}, "
+            f"1'b{int(expected.get('hazard_wait_o', 0))}"
             ");"
         )
     return "\n".join(lines)
@@ -4346,6 +4565,37 @@ def _scheduler_short_sequence_case(compiled_program: Optional[Dict[str, object]]
 
     return {
         "name": "single_slot_single_compute_no_clear",
+        "rows": 2,
+        "cols": 2,
+        "depth": 4,
+        "steps": steps,
+    }
+
+
+def _scheduler_decoupled_overlap_case(
+    compiled_program: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    vectors = _program_seed_vectors(compiled_program=compiled_program)
+    vectors["slot_count_i"] = 1
+    vectors["load_iterations_i"] = 2
+    vectors["compute_iterations_i"] = 2
+    vectors["store_burst_count_i"] = 2
+    vectors["clear_on_done_i"] = 1
+    starts = [1] + [0 for _ in range(10)]
+    steps = []
+    for cycle, start_value in enumerate(starts):
+        payload = dict(vectors)
+        payload["start_i"] = start_value
+        payload["decoupled_mode_i"] = 1
+        payload["dma_accept_i"] = 1
+        payload["load_accept_i"] = 0 if cycle == 2 else 1
+        payload["store_accept_i"] = 1
+        steps.append(payload)
+    for payload, expected in zip(steps, scheduler_reference(steps=steps)):
+        payload["expected"] = expected
+
+    return {
+        "name": "decoupled_overlap_with_hazard_tracking",
         "rows": 2,
         "cols": 2,
         "depth": 4,
@@ -5971,6 +6221,7 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
         "scheduler": [
             _scheduler_sequence_case(compiled_program=compiled_program),
             _scheduler_short_sequence_case(compiled_program=compiled_program),
+            _scheduler_decoupled_overlap_case(compiled_program=compiled_program),
         ],
         "scheduler_stress": _scheduler_stress_cases(compiled_program=compiled_program),
         "cluster_control": [_cluster_control_sequence_case(compiled_program=compiled_program)],

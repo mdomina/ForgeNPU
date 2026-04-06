@@ -159,6 +159,13 @@ def _build_case_report(
                 "busy": int(scheduler_snapshot["busy_o"]),
                 "done": int(scheduler_snapshot["done_o"]),
                 "event_tags": _event_tags(scheduler_snapshot=scheduler_snapshot, valid_lane_count=valid_lane_count),
+                "scheduler_status": {
+                    "decoupled_mode": int(scheduler_snapshot.get("decoupled_mode_o", 0)),
+                    "load_queue_depth": int(scheduler_snapshot.get("load_queue_depth_o", 0)),
+                    "execute_queue_depth": int(scheduler_snapshot.get("execute_queue_depth_o", 0)),
+                    "store_queue_depth": int(scheduler_snapshot.get("store_queue_depth_o", 0)),
+                    "hazard_wait": int(scheduler_snapshot.get("hazard_wait_o", 0)),
+                },
                 "control_path": {
                     "tile_dma_valid": [int(value) for value in control_snapshot["tile_dma_valid_o"]],
                     "dma_write_weights": int(control_snapshot["dma_write_weights_o"]),
@@ -344,6 +351,9 @@ def _event_tags(scheduler_snapshot: Dict[str, Any], valid_lane_count: int) -> Li
     if int(scheduler_snapshot["clear_acc_o"]):
         tags.append("clear")
 
+    if int(scheduler_snapshot.get("hazard_wait_o", 0)):
+        tags.append("hazard_wait")
+
     if valid_lane_count:
         tags.append("outputs_valid")
 
@@ -420,6 +430,19 @@ def _empty_summary() -> Dict[str, Any]:
             "peak_abs_psum": 0,
             "estimated_mac_operations": 0,
         },
+        "scheduler_queue_metrics": {
+            "max_load_queue_depth": 0,
+            "max_execute_queue_depth": 0,
+            "max_store_queue_depth": 0,
+            "hazard_wait_cycles": 0,
+            "decoupled_mode_cycles": 0,
+        },
+        "overlap_metrics": {
+            "memory_compute_overlap_cycles": 0,
+            "dma_compute_overlap_cycles": 0,
+            "load_compute_overlap_cycles": 0,
+            "store_compute_overlap_cycles": 0,
+        },
         "stress_verification": {
             "stress_case_count": 0,
             "stress_cycle_count": 0,
@@ -488,6 +511,24 @@ def _summarize_case_reports(
             control_path = step.get("control_path", {})
             interconnect_path = step.get("interconnect_path", {})
             compute_path = step["compute_path"]
+            scheduler_status = step.get("scheduler_status", {})
+
+            summary["scheduler_queue_metrics"]["max_load_queue_depth"] = max(
+                summary["scheduler_queue_metrics"]["max_load_queue_depth"],
+                int(scheduler_status.get("load_queue_depth", 0)),
+            )
+            summary["scheduler_queue_metrics"]["max_execute_queue_depth"] = max(
+                summary["scheduler_queue_metrics"]["max_execute_queue_depth"],
+                int(scheduler_status.get("execute_queue_depth", 0)),
+            )
+            summary["scheduler_queue_metrics"]["max_store_queue_depth"] = max(
+                summary["scheduler_queue_metrics"]["max_store_queue_depth"],
+                int(scheduler_status.get("store_queue_depth", 0)),
+            )
+            if int(scheduler_status.get("hazard_wait", 0)):
+                summary["scheduler_queue_metrics"]["hazard_wait_cycles"] += 1
+            if int(scheduler_status.get("decoupled_mode", 0)):
+                summary["scheduler_queue_metrics"]["decoupled_mode_cycles"] += 1
 
             dma_active_tiles = sum(int(value) for value in control_path.get("tile_dma_valid", []))
             load_active_tiles = sum(
@@ -618,6 +659,14 @@ def _summarize_case_reports(
                 summary["compute_path"]["estimated_mac_operations"] += int(
                     active_tile_count * rows * cols
                 )
+                if memory_path["dma_valid"] or memory_path["load_vector_en"] or memory_path["store_valid"]:
+                    summary["overlap_metrics"]["memory_compute_overlap_cycles"] += 1
+                if memory_path["dma_valid"]:
+                    summary["overlap_metrics"]["dma_compute_overlap_cycles"] += 1
+                if memory_path["load_vector_en"]:
+                    summary["overlap_metrics"]["load_compute_overlap_cycles"] += 1
+                if memory_path["store_valid"]:
+                    summary["overlap_metrics"]["store_compute_overlap_cycles"] += 1
 
             if compute_path.get("flush_pipeline"):
                 summary["compute_path"]["flush_cycles"] += 1

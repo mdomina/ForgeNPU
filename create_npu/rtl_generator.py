@@ -4747,6 +4747,23 @@ def _design_intent_template(
     tile_enable_mask = ", ".join(
         str(int(value)) for value in (compiled_program or {}).get("tile_enable_mask", [])
     ) or "1"
+    problem_shape = (compiled_program or {}).get("problem_shape", {})
+    operator_descriptors = (compiled_program or {}).get("operator_descriptors", [])
+    mapping_plan = (compiled_program or {}).get("mapping_plan", {})
+    problem_shape_lines = "\n".join(
+        f"- {key}: {value}" for key, value in problem_shape.items()
+    ) or "- Nessuna"
+    operator_lines = "\n".join(
+        (
+            f"- {operator.get('name', operator.get('op_type', 'op'))}: "
+            f"{operator.get('op_type', 'unknown')} "
+            f"({', '.join(f'{key}={value}' for key, value in operator.items() if key not in {'name', 'op_type'})})"
+        )
+        for operator in operator_descriptors
+    ) or "- Nessuno"
+    mapping_lines = "\n".join(
+        f"- {key}: {json.dumps(value, sort_keys=True)}" for key, value in mapping_plan.items()
+    ) or "- Nessuno"
 
     return f"""# Design Intent
 
@@ -4813,6 +4830,19 @@ def _design_intent_template(
 - Slot stride: {(compiled_program or {}).get("slot_stride", 1)}
 - Store stride: {(compiled_program or {}).get("store_stride", 1)}
 - Clear on done: {(compiled_program or {}).get("clear_on_done", True)}
+- Estimated MAC operations: {(compiled_program or {}).get("estimated_mac_operations", 0)}
+
+## Problem Shape
+
+{problem_shape_lines}
+
+## Operator Plan
+
+{operator_lines}
+
+## Mapping Plan
+
+{mapping_lines}
 
 ## Compiler Rationale
 

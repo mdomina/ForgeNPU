@@ -112,6 +112,16 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(program.store_burst_count, 2)
         self.assertEqual(program.clear_on_done, True)
         self.assertGreaterEqual(program.active_tile_count, 1)
+        self.assertEqual(program.problem_shape["sequence_length"], 4096)
+        self.assertGreaterEqual(program.problem_shape["hidden_dim"], 256)
+        self.assertEqual(len(program.operator_descriptors), 4)
+        self.assertEqual(program.operator_descriptors[0]["name"], "qkv_projection")
+        self.assertEqual(program.operator_descriptors[1]["op_type"], "batched_gemm")
+        self.assertEqual(
+            program.mapping_plan["loop_order"],
+            ["batch", "sequence_block", "head", "k_block"],
+        )
+        self.assertGreater(program.estimated_mac_operations, 0)
 
     def test_compile_seed_program_for_sparse_workload(self) -> None:
         spec = RequirementSpec(
@@ -132,8 +142,31 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(program.slot_count, 1)
         self.assertEqual(program.load_iterations, 1)
         self.assertEqual(program.compute_iterations, 1)
+        self.assertEqual(program.operator_descriptors[0]["op_type"], "spmm")
+        self.assertGreater(program.problem_shape["nnz"], 0)
         self.assertEqual(vectors["store_burst_count_i"], 1)
         self.assertEqual(vectors["clear_on_done_i"], 1)
+
+    def test_compile_seed_program_for_convolution_shape(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 8 TOPS convolution kernel 5x5 batch 1-4.",
+            numeric_precision="INT8",
+            throughput_value=8.0,
+            throughput_unit="TOPS",
+            workload_type="convolution",
+            kernel_size=5,
+            batch_min=1,
+            batch_max=4,
+            target_frequency_mhz=900.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        self.assertEqual(program.problem_shape["kernel_height"], 5)
+        self.assertEqual(program.problem_shape["kernel_width"], 5)
+        self.assertEqual(program.operator_descriptors[0]["op_type"], "conv2d")
+        self.assertEqual(program.mapping_plan["dataflow"], "weight_stationary")
+        self.assertGreater(program.operator_descriptors[0]["output_channels"], 0)
 
 
 class ArchitecturePlanningTest(unittest.TestCase):
@@ -419,6 +452,18 @@ class PipelineTest(unittest.TestCase):
                     / "compiled_program.json"
                 ).exists()
             )
+            compiled_program = json.loads(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "compiled_program.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIn("problem_shape", compiled_program)
+            self.assertIn("operator_descriptors", compiled_program)
+            self.assertIn("mapping_plan", compiled_program)
+            self.assertGreaterEqual(len(compiled_program["operator_descriptors"]), 1)
             self.assertTrue(
                 (
                     Path(result.output_dir)
@@ -990,6 +1035,8 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertIn("compiled_program", report["summary"])
             self.assertIn("tiling_strategy", report["summary"]["compiled_program"])
+            self.assertIn("problem_shape", report["summary"]["compiled_program"])
+            self.assertIn("operator_descriptors", report["summary"]["compiled_program"])
 
     def test_pipeline_handles_convolution_requirement(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1040,6 +1087,14 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(
                 report_payload["summary"]["compiled_program"]["slot_count"],
                 2,
+            )
+            self.assertEqual(
+                report_payload["summary"]["compiled_program"]["operator_descriptors"][0]["op_type"],
+                "conv2d",
+            )
+            self.assertEqual(
+                report_payload["summary"]["compiled_program"]["problem_shape"]["kernel_height"],
+                3,
             )
 
     def test_pipeline_archives_dataset_samples(self) -> None:

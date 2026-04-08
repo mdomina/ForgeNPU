@@ -1,9 +1,36 @@
 import math
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+from create_npu.memory_planner import plan_memory
 from create_npu.models import ArchitectureCandidate, RequirementSpec
 from create_npu.workloads import resolve_dataflow_for_family
+
+
+@dataclass
+class TensorDescriptor:
+    """Describes a single tensor operand in the compiled program.
+
+    Fields are intentionally rich enough to drive a future ``graph_mode`` or
+    ``operator_mode`` execution without re-deriving them from the requirement.
+    """
+
+    name: str
+    role: str                    # "activation_input" | "weight_input" | "output"
+    operator_name: str           # operator that owns this tensor
+    dtype: str                   # "INT8" | "INT16" | "INT32" | "FP16"
+    shape: List[int]             # logical dimensions, e.g. [M, K]
+    size_bytes: int              # total bytes = prod(shape) * itemsize
+    base_addr: int               # SRAM base address
+    stride_bytes: int            # leading-dimension stride in bytes
+    layout: str                  # "row_major" | "col_major" | "tiled"
+    requires_transpose: bool = False
+    quantization_scale: float = 1.0
+    producer_op: Optional[str] = None
+    consumer_ops: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -33,6 +60,68 @@ class TiledLoopNest:
     estimated_memory_cycles: int
     estimated_overlap_cycles: int
     cluster_occupancy_percent: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LoweredOp:
+    """A single operation in the lowered hardware execution plan.
+
+    Maps each high-level op (Gemm, Conv, Relu, Reduce, Concat, Slice, Pool)
+    to a concrete hardware primitive and tracks tensor flow and fusability.
+    """
+
+    name: str
+    op_type: str            # gemm | conv2d | spmm | relu | gelu | reduce | concat | slice | pool
+    hardware_primitive: str # systolic_gemm | im2col_conv | sparse_gemm |
+                            # vector_elementwise | vector_reduce | vector_pool | noop
+    inputs: List[str]       # tensor descriptor names consumed by this op
+    outputs: List[str]      # tensor descriptor names produced by this op
+    fusable_with_next: bool = False  # can be fused into the next op kernel
+    params: Dict[str, Any] = field(default_factory=dict)  # op-specific parameters
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DispatchEntry:
+    """Single issued operation in the hardware dispatch schedule.
+
+    Models the scoreboard slot for one lowered op: which engine it runs on,
+    which prior ops it depends on (RAW hazards), whether a barrier is needed
+    before it issues, and estimated issue/completion cycles.
+    """
+
+    op_name: str
+    engine: str                    # "dma" | "compute" | "vector" | "noop"
+    depends_on: List[str]          # ops whose outputs this op reads (RAW deps)
+    barrier_before: bool           # must drain prior engine ops before issuing
+    issue_cycle: int               # cycle when this op is issued
+    completion_cycle: int          # estimated cycle when this op completes
+    stall_cycles: int              # cycles stalled waiting for dependencies
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DispatchSchedule:
+    """Complete scoreboard-based dispatch plan for a lowered program.
+
+    Summarises issue order, barriers, hazards and cycle estimates for all
+    ops in the lowered program.
+    """
+
+    entries: List[Dict[str, Any]]   # serialised DispatchEntry list
+    total_issue_cycles: int
+    total_completion_cycles: int
+    barrier_count: int
+    stall_cycles: int
+    raw_hazard_count: int
+    engine_utilization: Dict[str, float]   # engine -> utilization fraction
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -70,6 +159,10 @@ class CompiledProgram:
     mapping_plan: Dict[str, Any] = field(default_factory=dict)
     tiled_loop_nest: Dict[str, Any] = field(default_factory=dict)
     cluster_occupancy: Dict[str, Any] = field(default_factory=dict)
+    tensor_descriptors: List[Dict[str, Any]] = field(default_factory=list)
+    memory_plan: Dict[str, Any] = field(default_factory=dict)
+    lowered_program: List[Dict[str, Any]] = field(default_factory=list)
+    dispatch_schedule: Dict[str, Any] = field(default_factory=dict)
     rationale: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -180,6 +273,51 @@ def compile_seed_program(
         f"transpose_inputs_i={int(mapping_plan.get('transpose_inputs', 0))})."
     )
 
+    tensor_descs = _tensor_descriptors(
+        spec=spec,
+        problem_shape=problem_shape,
+        activation_base_addr=activation_base_addr,
+        weight_base_addr=weight_base_addr,
+        result_base_addr=result_base_addr,
+        operator_descriptors=operator_descriptors,
+    )
+    rationale.append(
+        f"Tensor descriptors compilati: {len(tensor_descs)} descrittori "
+        f"({sum(1 for d in tensor_descs if d['role'] == 'activation_input')} activation, "
+        f"{sum(1 for d in tensor_descs if d['role'] == 'weight_input')} weight, "
+        f"{sum(1 for d in tensor_descs if d['role'] == 'output')} output)."
+    )
+
+    memory_plan = plan_memory(
+        tensor_descriptors=tensor_descs,
+        operator_descriptors=operator_descriptors,
+    )
+    rationale.append(
+        f"Memory plan: peak SRAM senza riuso={memory_plan.get('peak_sram_bytes_no_reuse', 0)} B, "
+        f"con riuso={memory_plan.get('peak_sram_bytes_with_reuse', 0)} B "
+        f"(risparmio {memory_plan.get('reuse_savings_pct', 0)}%)."
+    )
+
+    lowered_program = _lower_operators(
+        spec=spec,
+        operator_descriptors=operator_descriptors,
+        problem_shape=problem_shape,
+    )
+    fusable_count = sum(1 for op in lowered_program if op.get("fusable_with_next"))
+    rationale.append(
+        f"Lowered program: {len(lowered_program)} op "
+        f"({', '.join(sorted({op['op_type'] for op in lowered_program}))}), "
+        f"{fusable_count} fusable."
+    )
+
+    dispatch_schedule = _build_dispatch_schedule(lowered_program)
+    rationale.append(
+        f"Dispatch schedule: {dispatch_schedule.get('total_issue_cycles', 0)} issue, "
+        f"{dispatch_schedule.get('barrier_count', 0)} barrier, "
+        f"{dispatch_schedule.get('raw_hazard_count', 0)} RAW hazard, "
+        f"{dispatch_schedule.get('stall_cycles', 0)} stall cycles."
+    )
+
     return CompiledProgram(
         name=f"{spec.workload_type}_{spec.execution_mode}_seed_program",
         workload_type=spec.workload_type,
@@ -211,6 +349,10 @@ def compile_seed_program(
         mapping_plan=mapping_plan,
         tiled_loop_nest=tiled_nest.to_dict(),
         cluster_occupancy=cluster_occupancy,
+        tensor_descriptors=tensor_descs,
+        memory_plan=memory_plan,
+        lowered_program=lowered_program,
+        dispatch_schedule=dispatch_schedule,
         rationale=rationale,
     )
 
@@ -796,6 +938,547 @@ def _align_up(value: int, granularity: int) -> int:
     safe_granularity = max(1, granularity)
     safe_value = max(1, value)
     return int(math.ceil(safe_value / safe_granularity) * safe_granularity)
+
+
+def _build_dispatch_schedule(
+    lowered_program: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build a scoreboard-based dispatch schedule for the lowered program.
+
+    Algorithm
+    ---------
+    1. Assign each op to an engine based on its hardware_primitive.
+    2. Detect RAW hazards: op B has a RAW dep on op A if any of B's inputs
+       is produced by A (i.e. appears in A's outputs).
+    3. Place a barrier_before flag when B's engine differs from A's engine
+       and there is a RAW dependency.
+    4. Estimate issue_cycle: max(prior_completion_cycles_of_deps) + 1.
+    5. Estimate completion_cycle: issue_cycle + engine_latency_cycles.
+    6. Compute stall_cycles = issue_cycle - (prev_issue_cycle + 1) if > 0.
+    """
+    _PRIMITIVE_TO_ENGINE: Dict[str, str] = {
+        "systolic_gemm": "compute",
+        "im2col_conv": "compute",
+        "sparse_gemm": "compute",
+        "vector_elementwise": "vector",
+        "vector_reduce": "vector",
+        "vector_pool": "vector",
+        "noop": "noop",
+    }
+    _ENGINE_LATENCY: Dict[str, int] = {
+        "compute": 4,
+        "vector": 1,
+        "noop": 0,
+        "dma": 2,
+    }
+
+    # Map output tensor name → op name that produces it
+    produced_by: Dict[str, str] = {}
+    for op in lowered_program:
+        for out in op.get("outputs", []):
+            produced_by[out] = op["name"]
+
+    entries: List[Dict[str, Any]] = []
+    # Track latest completion cycle per op name
+    completion_of: Dict[str, int] = {}
+    prev_engine = ""
+    current_cycle = 0
+
+    engine_busy_cycles: Dict[str, int] = {}
+
+    for op in lowered_program:
+        primitive = op.get("hardware_primitive", "noop")
+        engine = _PRIMITIVE_TO_ENGINE.get(primitive, "noop")
+        latency = _ENGINE_LATENCY.get(engine, 1)
+
+        # RAW dependencies
+        raw_deps: List[str] = []
+        for inp in op.get("inputs", []):
+            producer = produced_by.get(inp)
+            if producer is not None:
+                raw_deps.append(producer)
+
+        # Earliest possible issue: after all dependencies complete
+        earliest = current_cycle
+        for dep in raw_deps:
+            dep_completion = completion_of.get(dep, 0)
+            if dep_completion >= earliest:
+                earliest = dep_completion + 1
+
+        # Barrier when engine changes AND there is a RAW dep from a different engine
+        barrier = False
+        if raw_deps and prev_engine and prev_engine != engine and prev_engine != "noop":
+            barrier = True
+            # Barrier drains all in-flight compute ops: advance to latest completion
+            max_completion = max(completion_of.values(), default=0)
+            if max_completion + 1 > earliest:
+                earliest = max_completion + 1
+
+        stall = max(0, earliest - current_cycle)
+        issue_cycle = earliest
+        completion_cycle = issue_cycle + latency
+        current_cycle = issue_cycle + 1
+
+        engine_busy_cycles[engine] = engine_busy_cycles.get(engine, 0) + latency
+        completion_of[op["name"]] = completion_cycle
+
+        entries.append(
+            DispatchEntry(
+                op_name=op["name"],
+                engine=engine,
+                depends_on=raw_deps,
+                barrier_before=barrier,
+                issue_cycle=issue_cycle,
+                completion_cycle=completion_cycle,
+                stall_cycles=stall,
+            ).to_dict()
+        )
+        if engine != "noop":
+            prev_engine = engine
+
+    total_issue = len(entries)
+    total_completion = max((e["completion_cycle"] for e in entries), default=0)
+    barrier_count = sum(1 for e in entries if e["barrier_before"])
+    total_stall = sum(e["stall_cycles"] for e in entries)
+    raw_hazard_count = sum(1 for e in entries if e["depends_on"])
+
+    # Utilization: busy / total_completion
+    util: Dict[str, float] = {}
+    for eng, busy in engine_busy_cycles.items():
+        if eng == "noop":
+            continue
+        util[eng] = round(busy / max(1, total_completion), 3)
+
+    return DispatchSchedule(
+        entries=entries,
+        total_issue_cycles=total_issue,
+        total_completion_cycles=total_completion,
+        barrier_count=barrier_count,
+        stall_cycles=total_stall,
+        raw_hazard_count=raw_hazard_count,
+        engine_utilization=util,
+    ).to_dict()
+
+
+def _lower_operators(
+    spec: RequirementSpec,
+    operator_descriptors: List[Dict[str, Any]],
+    problem_shape: Dict[str, int],
+) -> List[Dict[str, Any]]:
+    """Build the lowered operation sequence for the compiled program.
+
+    Translates each primary compute op to a hardware primitive and inserts
+    elementwise (Relu/Gelu), reduction (softmax), pooling (Pool), concat
+    and slice ops where they naturally appear in the workload dataflow.
+
+    Supported op_types: gemm, conv2d, spmm, relu, gelu, reduce, concat,
+    slice, pool.
+    Supported hardware_primitives: systolic_gemm, im2col_conv, sparse_gemm,
+    vector_elementwise, vector_reduce, vector_pool, noop.
+    """
+    if spec.workload_type == "transformer":
+        return _lower_transformer(problem_shape)
+    if spec.workload_type == "convolution":
+        return _lower_convolution(problem_shape)
+    if spec.workload_type == "sparse_linear_algebra":
+        return _lower_sparse(problem_shape)
+    return _lower_gemm(problem_shape)
+
+
+def _lower_gemm(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:
+    """dense_gemm lowering: Gemm → Relu (fused)."""
+    m = int(problem_shape.get("m", 1))
+    k = int(problem_shape.get("k", 1))
+    n = int(problem_shape.get("n", 1))
+    return [
+        LoweredOp(
+            name="gemm_main",
+            op_type="gemm",
+            hardware_primitive="systolic_gemm",
+            inputs=["gemm_main_activation_in", "gemm_main_weight_in"],
+            outputs=["gemm_main_result_out"],
+            fusable_with_next=True,
+            params={"m": m, "k": k, "n": n},
+        ).to_dict(),
+        LoweredOp(
+            name="relu_post_gemm",
+            op_type="relu",
+            hardware_primitive="vector_elementwise",
+            inputs=["gemm_main_result_out"],
+            outputs=["relu_post_gemm_out"],
+            fusable_with_next=False,
+            params={"shape": [m, n]},
+        ).to_dict(),
+    ]
+
+
+def _lower_convolution(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:
+    """convolution lowering: Conv2d (im2col) → Relu (fused) → Pool."""
+    oh = int(problem_shape.get("output_height", 1))
+    ow = int(problem_shape.get("output_width", 1))
+    oc = int(problem_shape.get("output_channels", 1))
+    ic = int(problem_shape.get("input_channels", 1))
+    kh = int(problem_shape.get("kernel_height", 1))
+    kw = int(problem_shape.get("kernel_width", 1))
+    pool_size = 2
+    pool_oh = max(1, oh // pool_size)
+    pool_ow = max(1, ow // pool_size)
+    return [
+        LoweredOp(
+            name="conv2d_main",
+            op_type="conv2d",
+            hardware_primitive="im2col_conv",
+            inputs=["conv2d_main_activation_in", "conv2d_main_weight_in"],
+            outputs=["conv2d_main_result_out"],
+            fusable_with_next=True,
+            params={
+                "output_height": oh, "output_width": ow, "output_channels": oc,
+                "input_channels": ic, "kernel_height": kh, "kernel_width": kw,
+                "via_im2col": True,
+            },
+        ).to_dict(),
+        LoweredOp(
+            name="relu_post_conv",
+            op_type="relu",
+            hardware_primitive="vector_elementwise",
+            inputs=["conv2d_main_result_out"],
+            outputs=["relu_post_conv_out"],
+            fusable_with_next=True,
+            params={"shape": [oh * ow, oc]},
+        ).to_dict(),
+        LoweredOp(
+            name="pool_post_relu",
+            op_type="pool",
+            hardware_primitive="vector_pool",
+            inputs=["relu_post_conv_out"],
+            outputs=["pool_post_relu_out"],
+            fusable_with_next=False,
+            params={
+                "pool_type": "max",
+                "pool_size": pool_size,
+                "input_shape": [oh, ow, oc],
+                "output_shape": [pool_oh, pool_ow, oc],
+            },
+        ).to_dict(),
+    ]
+
+
+def _lower_transformer(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:
+    """transformer lowering: QKV Gemm → Slice(Q,K,V) → Attn Gemm → Softmax
+    Reduce → Value Gemm → Concat heads → Output Gemm → GeLU."""
+    batch = int(problem_shape.get("batch", 1))
+    seq = int(problem_shape.get("sequence_length", 1))
+    hidden = int(problem_shape.get("hidden_dim", 1))
+    head_count = int(problem_shape.get("head_count", 1))
+    head_dim = int(problem_shape.get("head_dim", 1))
+    proj = int(problem_shape.get("projection_dim", 1))
+    token_count = batch * seq
+    return [
+        LoweredOp(
+            name="qkv_projection",
+            op_type="gemm",
+            hardware_primitive="systolic_gemm",
+            inputs=["activation_in", "weight_in"],
+            outputs=["qkv_combined"],
+            fusable_with_next=True,
+            params={"m": token_count, "k": hidden, "n": proj},
+        ).to_dict(),
+        LoweredOp(
+            name="slice_q",
+            op_type="slice",
+            hardware_primitive="noop",
+            inputs=["qkv_combined"],
+            outputs=["q_slice"],
+            fusable_with_next=False,
+            params={"axis": 1, "start": 0, "end": hidden, "shape": [token_count, hidden]},
+        ).to_dict(),
+        LoweredOp(
+            name="slice_k",
+            op_type="slice",
+            hardware_primitive="noop",
+            inputs=["qkv_combined"],
+            outputs=["k_slice"],
+            fusable_with_next=False,
+            params={"axis": 1, "start": hidden, "end": 2 * hidden, "shape": [token_count, hidden]},
+        ).to_dict(),
+        LoweredOp(
+            name="slice_v",
+            op_type="slice",
+            hardware_primitive="noop",
+            inputs=["qkv_combined"],
+            outputs=["v_slice"],
+            fusable_with_next=False,
+            params={"axis": 1, "start": 2 * hidden, "end": proj, "shape": [token_count, head_dim]},
+        ).to_dict(),
+        LoweredOp(
+            name="attention_scores",
+            op_type="gemm",
+            hardware_primitive="systolic_gemm",
+            inputs=["q_slice", "k_slice"],
+            outputs=["attn_scores_out"],
+            fusable_with_next=True,
+            params={"m": seq, "k": head_dim, "n": seq, "batch_groups": batch * head_count},
+        ).to_dict(),
+        LoweredOp(
+            name="softmax_reduce",
+            op_type="reduce",
+            hardware_primitive="vector_reduce",
+            inputs=["attn_scores_out"],
+            outputs=["softmax_out"],
+            fusable_with_next=True,
+            params={"op": "softmax", "axis": -1, "shape": [batch * head_count, seq, seq]},
+        ).to_dict(),
+        LoweredOp(
+            name="attention_value_mix",
+            op_type="gemm",
+            hardware_primitive="systolic_gemm",
+            inputs=["softmax_out", "v_slice"],
+            outputs=["attn_value_out"],
+            fusable_with_next=True,
+            params={"m": seq, "k": seq, "n": head_dim, "batch_groups": batch * head_count},
+        ).to_dict(),
+        LoweredOp(
+            name="concat_heads",
+            op_type="concat",
+            hardware_primitive="noop",
+            inputs=["attn_value_out"],
+            outputs=["multi_head_out"],
+            fusable_with_next=True,
+            params={"axis": -1, "head_count": head_count, "output_shape": [token_count, hidden]},
+        ).to_dict(),
+        LoweredOp(
+            name="output_projection",
+            op_type="gemm",
+            hardware_primitive="systolic_gemm",
+            inputs=["multi_head_out", "weight_in"],
+            outputs=["output_proj_out"],
+            fusable_with_next=True,
+            params={"m": token_count, "k": hidden, "n": hidden},
+        ).to_dict(),
+        LoweredOp(
+            name="gelu_output",
+            op_type="gelu",
+            hardware_primitive="vector_elementwise",
+            inputs=["output_proj_out"],
+            outputs=["gelu_out"],
+            fusable_with_next=False,
+            params={"shape": [token_count, hidden]},
+        ).to_dict(),
+    ]
+
+
+def _lower_sparse(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:
+    """sparse_linear_algebra lowering: SpMM → Relu (fused)."""
+    m = int(problem_shape.get("m", 1))
+    nnz = int(problem_shape.get("nnz", 1))
+    n = int(problem_shape.get("n", 1))
+    return [
+        LoweredOp(
+            name="spmm_main",
+            op_type="spmm",
+            hardware_primitive="sparse_gemm",
+            inputs=["spmm_main_activation_in", "spmm_main_weight_in"],
+            outputs=["spmm_main_result_out"],
+            fusable_with_next=True,
+            params={"m": m, "nnz": nnz, "n": n},
+        ).to_dict(),
+        LoweredOp(
+            name="relu_post_spmm",
+            op_type="relu",
+            hardware_primitive="vector_elementwise",
+            inputs=["spmm_main_result_out"],
+            outputs=["relu_post_spmm_out"],
+            fusable_with_next=False,
+            params={"shape": [m, n]},
+        ).to_dict(),
+    ]
+
+
+def _tensor_descriptors(
+    spec: RequirementSpec,
+    problem_shape: Dict[str, int],
+    activation_base_addr: int,
+    weight_base_addr: int,
+    result_base_addr: int,
+    operator_descriptors: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build TensorDescriptor records for all operands in the compiled program.
+
+    Produces one activation, one weight and one output descriptor for the seed
+    LOAD/COMPUTE/STORE program, plus per-operator descriptors drawn from
+    *operator_descriptors*.  All descriptors are returned as plain dicts so
+    they serialise cleanly to JSON.
+    """
+    bytes_per_element = 1 if spec.numeric_precision.startswith("INT8") else 2
+    result_bytes_per_element = 4  # INT32 accumulator
+
+    def _itemsize(dtype: str) -> int:
+        return 1 if dtype in ("INT8", "UINT8") else (2 if dtype in ("INT16", "FP16") else 4)
+
+    descriptors: List[Dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Seed-level descriptors  (one activation, one weight, one output)
+    # ------------------------------------------------------------------
+    if spec.workload_type == "transformer":
+        m = int(problem_shape.get("sequence_length", 1))
+        k = int(problem_shape.get("hidden_dim", 1))
+        n = int(problem_shape.get("projection_dim", 1))
+    elif spec.workload_type == "convolution":
+        oh = int(problem_shape.get("output_height", 1))
+        ow = int(problem_shape.get("output_width", 1))
+        ic = int(problem_shape.get("input_channels", 1))
+        kh = int(problem_shape.get("kernel_height", 1))
+        kw = int(problem_shape.get("kernel_width", 1))
+        oc = int(problem_shape.get("output_channels", 1))
+        m = oh * ow
+        k = ic * kh * kw   # im2col K dimension
+        n = oc
+    elif spec.workload_type == "sparse_linear_algebra":
+        m = int(problem_shape.get("m", 1))
+        k = int(problem_shape.get("nnz", 1))
+        n = int(problem_shape.get("n", 1))
+    else:
+        m = int(problem_shape.get("m", 1))
+        k = int(problem_shape.get("k", 1))
+        n = int(problem_shape.get("n", 1))
+
+    op_name = operator_descriptors[0].get("name", "seed_op") if operator_descriptors else "seed_op"
+    act_layout = "im2col_row_major" if spec.workload_type == "convolution" else "row_major"
+
+    act_size = m * k * bytes_per_element
+    wgt_size = k * n * bytes_per_element
+    res_size = m * n * result_bytes_per_element
+
+    descriptors.append(
+        TensorDescriptor(
+            name="activation_in",
+            role="activation_input",
+            operator_name=op_name,
+            dtype=spec.numeric_precision,
+            shape=[m, k],
+            size_bytes=act_size,
+            base_addr=activation_base_addr,
+            stride_bytes=k * bytes_per_element,
+            layout=act_layout,
+            requires_transpose=False,
+            quantization_scale=1.0,
+            producer_op=None,
+            consumer_ops=[op_name],
+        ).to_dict()
+    )
+    descriptors.append(
+        TensorDescriptor(
+            name="weight_in",
+            role="weight_input",
+            operator_name=op_name,
+            dtype=spec.numeric_precision,
+            shape=[k, n],
+            size_bytes=wgt_size,
+            base_addr=weight_base_addr,
+            stride_bytes=n * bytes_per_element,
+            layout="row_major",
+            requires_transpose=False,
+            quantization_scale=1.0,
+            producer_op=None,
+            consumer_ops=[op_name],
+        ).to_dict()
+    )
+    descriptors.append(
+        TensorDescriptor(
+            name="result_out",
+            role="output",
+            operator_name=op_name,
+            dtype="INT32",
+            shape=[m, n],
+            size_bytes=res_size,
+            base_addr=result_base_addr,
+            stride_bytes=n * result_bytes_per_element,
+            layout="row_major",
+            requires_transpose=False,
+            quantization_scale=1.0,
+            producer_op=op_name,
+            consumer_ops=[],
+        ).to_dict()
+    )
+
+    # ------------------------------------------------------------------
+    # Per-operator descriptors (one input-pair + output per operator)
+    # ------------------------------------------------------------------
+    for op in operator_descriptors:
+        op_type = str(op.get("op_type", "gemm"))
+        o_name = str(op.get("name", op_type))
+        op_m = int(op.get("m", m))
+        op_k = int(op.get("k", k))
+        op_n = int(op.get("n", n))
+        if op_type == "conv2d":
+            op_m = int(op.get("output_height", 1)) * int(op.get("output_width", 1))
+            op_k = (
+                int(op.get("input_channels", 1))
+                * int(op.get("kernel_height", 1))
+                * int(op.get("kernel_width", 1))
+            )
+            op_n = int(op.get("output_channels", 1))
+        elif op_type == "spmm":
+            op_m = int(op.get("m", 1))
+            op_k = int(op.get("nnz", 1))
+            op_n = int(op.get("n", 1))
+        op_act_size = op_m * op_k * bytes_per_element
+        op_wgt_size = op_k * op_n * bytes_per_element
+        op_res_size = op_m * op_n * result_bytes_per_element
+        descriptors.append(
+            TensorDescriptor(
+                name=f"{o_name}_activation_in",
+                role="activation_input",
+                operator_name=o_name,
+                dtype=spec.numeric_precision,
+                shape=[op_m, op_k],
+                size_bytes=op_act_size,
+                base_addr=activation_base_addr,
+                stride_bytes=op_k * bytes_per_element,
+                layout="row_major" if op_type != "conv2d" else "im2col_row_major",
+                requires_transpose=False,
+                quantization_scale=1.0,
+                producer_op=None,
+                consumer_ops=[o_name],
+            ).to_dict()
+        )
+        descriptors.append(
+            TensorDescriptor(
+                name=f"{o_name}_weight_in",
+                role="weight_input",
+                operator_name=o_name,
+                dtype=spec.numeric_precision,
+                shape=[op_k, op_n],
+                size_bytes=op_wgt_size,
+                base_addr=weight_base_addr,
+                stride_bytes=op_n * bytes_per_element,
+                layout="row_major",
+                requires_transpose=False,
+                quantization_scale=1.0,
+                producer_op=None,
+                consumer_ops=[o_name],
+            ).to_dict()
+        )
+        descriptors.append(
+            TensorDescriptor(
+                name=f"{o_name}_result_out",
+                role="output",
+                operator_name=o_name,
+                dtype="INT32",
+                shape=[op_m, op_n],
+                size_bytes=op_res_size,
+                base_addr=result_base_addr,
+                stride_bytes=op_n * result_bytes_per_element,
+                layout="row_major",
+                requires_transpose=False,
+                quantization_scale=1.0,
+                producer_op=o_name,
+                consumer_ops=[],
+            ).to_dict()
+        )
+
+    return descriptors
 
 
 def _activation_slots(spec: RequirementSpec) -> List[List[int]]:

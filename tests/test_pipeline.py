@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from create_npu.architect import generate_candidate_architectures, plan_architecture
 from create_npu.benchmark import run_regression_benchmark
-from create_npu.compiler import compile_seed_program, compiled_program_seed_vectors
+from create_npu.compiler import TensorDescriptor, compile_seed_program, compiled_program_seed_vectors
 from create_npu.harness import VerificationHarness
 from create_npu.models import (
     ArchitectureCandidate,
@@ -25,6 +25,11 @@ from create_npu.rtl_generator import (
     _seed_tile_shape,
     _systolic_tile_template,
     emit_seed_rtl,
+)
+from create_npu.gemmini_reference import (
+    GEMMINI_REFERENCE_CONFIGS,
+    compute_gemmini_delta,
+    select_nearest_gemmini_reference,
 )
 from create_npu.scorer import score_design
 
@@ -450,6 +455,590 @@ class ArchitecturePlanningTest(unittest.TestCase):
             architectures[4].bus_width_bits,
             architectures[1].bus_width_bits,
         )
+
+
+class TensorDescriptorTest(unittest.TestCase):
+    def _compile_gemm(self, tops: float = 4.0, batch: int = 1) -> object:
+        spec = RequirementSpec(
+            original_text=f"NPU INT8 {tops} TOPS dense GEMM batch {batch}.",
+            numeric_precision="INT8",
+            throughput_value=tops,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            batch_min=1,
+            batch_max=batch,
+            target_frequency_mhz=1000.0,
+        )
+        return compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+
+    def test_tensor_descriptors_present(self) -> None:
+        program = self._compile_gemm()
+        self.assertIn("tensor_descriptors", program.to_dict())
+        self.assertIsInstance(program.tensor_descriptors, list)
+        self.assertGreater(len(program.tensor_descriptors), 0)
+
+    def test_seed_level_roles(self) -> None:
+        program = self._compile_gemm()
+        # First 3 descriptors are always the seed-level activation/weight/output
+        seed = program.tensor_descriptors[:3]
+        roles = [d["role"] for d in seed]
+        self.assertEqual(roles, ["activation_input", "weight_input", "output"])
+
+    def test_dtype_int8_for_inputs_int32_for_output(self) -> None:
+        program = self._compile_gemm()
+        seed = program.tensor_descriptors[:3]
+        self.assertEqual(seed[0]["dtype"], "INT8")
+        self.assertEqual(seed[1]["dtype"], "INT8")
+        self.assertEqual(seed[2]["dtype"], "INT32")
+
+    def test_shape_and_size_bytes_consistent(self) -> None:
+        program = self._compile_gemm()
+        for desc in program.tensor_descriptors:
+            shape = desc["shape"]
+            size = desc["size_bytes"]
+            itemsize = 1 if desc["dtype"] == "INT8" else (2 if desc["dtype"] in ("INT16", "FP16") else 4)
+            expected = 1
+            for d in shape:
+                expected *= d
+            expected *= itemsize
+            self.assertEqual(size, expected, msg=f"Mismatch in {desc['name']}: {size} != {expected}")
+
+    def test_base_addr_matches_compiled_program(self) -> None:
+        program = self._compile_gemm()
+        seed = program.tensor_descriptors[:3]
+        self.assertEqual(seed[0]["base_addr"], program.activation_base_addr)
+        self.assertEqual(seed[1]["base_addr"], program.weight_base_addr)
+        self.assertEqual(seed[2]["base_addr"], program.result_base_addr)
+
+    def test_output_has_producer_op(self) -> None:
+        program = self._compile_gemm()
+        outputs = [d for d in program.tensor_descriptors if d["role"] == "output"]
+        for out in outputs:
+            self.assertIsNotNone(out["producer_op"])
+
+    def test_input_tensors_have_consumer_ops(self) -> None:
+        program = self._compile_gemm()
+        inputs = [
+            d for d in program.tensor_descriptors
+            if d["role"] in ("activation_input", "weight_input")
+        ]
+        for inp in inputs:
+            self.assertGreater(len(inp["consumer_ops"]), 0)
+
+    def test_per_operator_descriptors_for_transformer(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 20 TOPS transformer seq 512 batch 1.",
+            numeric_precision="INT8",
+            throughput_value=20.0,
+            throughput_unit="TOPS",
+            workload_type="transformer",
+            sequence_length=512,
+            batch_min=1,
+            batch_max=1,
+            target_frequency_mhz=1000.0,
+        )
+        program = compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+        # transformer has 4 operators → 3 seed + 4*3 per-op = 15 descriptors
+        self.assertEqual(len(program.tensor_descriptors), 3 + 4 * 3)
+        op_names = {d["operator_name"] for d in program.tensor_descriptors}
+        self.assertIn("qkv_projection", op_names)
+        self.assertIn("attention_scores", op_names)
+
+    def test_convolution_uses_im2col_layout(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 8 TOPS conv2d kernel 3x3.",
+            numeric_precision="INT8",
+            throughput_value=8.0,
+            throughput_unit="TOPS",
+            workload_type="convolution",
+            kernel_size=3,
+            target_frequency_mhz=1000.0,
+        )
+        program = compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+        # conv2d has 1 operator → 3 seed + 1*3 per-op = 6 descriptors
+        self.assertEqual(len(program.tensor_descriptors), 6)
+        conv_act = next(
+            d for d in program.tensor_descriptors
+            if d["role"] == "activation_input" and "conv2d_main" in d["operator_name"]
+        )
+        self.assertEqual(conv_act["layout"], "im2col_row_major")
+
+    def test_tensor_descriptor_serialises_to_dict(self) -> None:
+        desc = TensorDescriptor(
+            name="test_act",
+            role="activation_input",
+            operator_name="gemm_main",
+            dtype="INT8",
+            shape=[32, 64],
+            size_bytes=2048,
+            base_addr=0,
+            stride_bytes=64,
+            layout="row_major",
+        )
+        d = desc.to_dict()
+        self.assertEqual(d["name"], "test_act")
+        self.assertEqual(d["shape"], [32, 64])
+        self.assertEqual(d["size_bytes"], 2048)
+        self.assertEqual(d["producer_op"], None)
+        self.assertEqual(d["consumer_ops"], [])
+
+
+class MemoryPlannerTest(unittest.TestCase):
+    def _compile_gemm(self, tops: float = 4.0) -> object:
+        spec = RequirementSpec(
+            original_text=f"NPU INT8 {tops} TOPS dense GEMM batch 1.",
+            numeric_precision="INT8",
+            throughput_value=tops,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            batch_min=1,
+            batch_max=1,
+            target_frequency_mhz=1000.0,
+        )
+        return compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+
+    def test_memory_plan_present_in_compiled_program(self) -> None:
+        program = self._compile_gemm()
+        self.assertIn("memory_plan", program.to_dict())
+        self.assertIsInstance(program.memory_plan, dict)
+
+    def test_memory_plan_has_required_fields(self) -> None:
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        for field in ("operator_count", "tensor_count", "peak_sram_bytes_no_reuse",
+                      "peak_sram_bytes_with_reuse", "reuse_savings_bytes",
+                      "reuse_savings_pct", "per_step_live_bytes", "allocations"):
+            self.assertIn(field, mp, msg=f"Missing field: {field}")
+
+    def test_memory_plan_single_op_gemm_has_positive_peak(self) -> None:
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        self.assertGreater(mp["peak_sram_bytes_no_reuse"], 0)
+        self.assertGreater(mp["peak_sram_bytes_with_reuse"], 0)
+
+    def test_memory_plan_single_op_peak_equals_sum_of_tensors(self) -> None:
+        # With a single operator, all per-op tensors are co-live → no savings
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        total = sum(alloc["size_bytes"] for alloc in mp["allocations"])
+        self.assertEqual(mp["peak_sram_bytes_no_reuse"], total)
+
+    def test_memory_plan_allocations_cover_all_per_op_tensors(self) -> None:
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        # 1 gemm_main operator → 3 per-operator descriptors
+        self.assertEqual(mp["tensor_count"], 3)
+        self.assertEqual(len(mp["allocations"]), 3)
+
+    def test_memory_plan_per_step_live_bytes_length_matches_operator_count(self) -> None:
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        self.assertEqual(len(mp["per_step_live_bytes"]), mp["operator_count"])
+
+    def test_memory_plan_transformer_multi_op_no_reuse_geq_with_reuse(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 20 TOPS transformer seq 512 batch 1.",
+            numeric_precision="INT8",
+            throughput_value=20.0,
+            throughput_unit="TOPS",
+            workload_type="transformer",
+            sequence_length=512,
+            batch_min=1,
+            batch_max=1,
+            target_frequency_mhz=1000.0,
+        )
+        program = compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+        mp = program.memory_plan
+        self.assertGreaterEqual(
+            mp["peak_sram_bytes_no_reuse"],
+            mp["peak_sram_bytes_with_reuse"],
+        )
+
+    def test_memory_plan_reuse_savings_consistent(self) -> None:
+        program = self._compile_gemm()
+        mp = program.memory_plan
+        expected_savings = mp["peak_sram_bytes_no_reuse"] - mp["peak_sram_bytes_with_reuse"]
+        self.assertEqual(mp["reuse_savings_bytes"], expected_savings)
+        expected_pct = round(100.0 * expected_savings / max(1, mp["peak_sram_bytes_no_reuse"]), 2)
+        self.assertAlmostEqual(mp["reuse_savings_pct"], expected_pct, places=5)
+
+
+class LoweredProgramTest(unittest.TestCase):
+    def _compile(self, workload_type: str, tops: float = 4.0, **kwargs) -> object:
+        spec = RequirementSpec(
+            original_text=f"NPU INT8 {tops} TOPS {workload_type} batch 1.",
+            numeric_precision="INT8",
+            throughput_value=tops,
+            throughput_unit="TOPS",
+            workload_type=workload_type,
+            batch_min=1,
+            batch_max=kwargs.get("batch_max", 1),
+            target_frequency_mhz=1000.0,
+            kernel_size=kwargs.get("kernel_size"),
+            sequence_length=kwargs.get("sequence_length"),
+        )
+        return compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+
+    def test_lowered_program_present(self) -> None:
+        program = self._compile("dense_gemm")
+        self.assertIn("lowered_program", program.to_dict())
+        self.assertIsInstance(program.lowered_program, list)
+        self.assertGreater(len(program.lowered_program), 0)
+
+    def test_dense_gemm_has_gemm_and_relu(self) -> None:
+        program = self._compile("dense_gemm")
+        ops = program.lowered_program
+        self.assertEqual(ops[0]["op_type"], "gemm")
+        self.assertEqual(ops[1]["op_type"], "relu")
+
+    def test_dense_gemm_gemm_primitive_is_systolic(self) -> None:
+        program = self._compile("dense_gemm")
+        self.assertEqual(program.lowered_program[0]["hardware_primitive"], "systolic_gemm")
+
+    def test_dense_gemm_gemm_is_fusable(self) -> None:
+        program = self._compile("dense_gemm")
+        self.assertTrue(program.lowered_program[0]["fusable_with_next"])
+
+    def test_convolution_has_conv_relu_pool(self) -> None:
+        program = self._compile("convolution", tops=8.0, kernel_size=3)
+        op_types = [op["op_type"] for op in program.lowered_program]
+        self.assertIn("conv2d", op_types)
+        self.assertIn("relu", op_types)
+        self.assertIn("pool", op_types)
+        self.assertEqual(op_types[0], "conv2d")
+
+    def test_convolution_pool_is_max(self) -> None:
+        program = self._compile("convolution", tops=8.0, kernel_size=3)
+        pool_op = next(op for op in program.lowered_program if op["op_type"] == "pool")
+        self.assertEqual(pool_op["hardware_primitive"], "vector_pool")
+        self.assertEqual(pool_op["params"]["pool_type"], "max")
+
+    def test_convolution_conv_uses_im2col(self) -> None:
+        program = self._compile("convolution", tops=8.0, kernel_size=3)
+        conv_op = next(op for op in program.lowered_program if op["op_type"] == "conv2d")
+        self.assertEqual(conv_op["hardware_primitive"], "im2col_conv")
+        self.assertTrue(conv_op["params"]["via_im2col"])
+
+    def test_transformer_has_slice_reduce_concat(self) -> None:
+        program = self._compile("transformer", tops=20.0, sequence_length=512)
+        op_types = [op["op_type"] for op in program.lowered_program]
+        self.assertIn("slice", op_types)
+        self.assertIn("reduce", op_types)
+        self.assertIn("concat", op_types)
+
+    def test_transformer_reduce_is_softmax(self) -> None:
+        program = self._compile("transformer", tops=20.0, sequence_length=512)
+        reduce_op = next(op for op in program.lowered_program if op["op_type"] == "reduce")
+        self.assertEqual(reduce_op["hardware_primitive"], "vector_reduce")
+        self.assertEqual(reduce_op["params"]["op"], "softmax")
+
+    def test_sparse_has_spmm_and_relu(self) -> None:
+        program = self._compile("sparse_linear_algebra", tops=4.0)
+        ops = program.lowered_program
+        self.assertEqual(ops[0]["op_type"], "spmm")
+        self.assertEqual(ops[0]["hardware_primitive"], "sparse_gemm")
+        self.assertEqual(ops[1]["op_type"], "relu")
+
+    def test_all_required_op_types_covered(self) -> None:
+        required = {"gemm", "conv2d", "relu", "reduce", "concat", "slice", "pool"}
+        found: set = set()
+        for workload, kwargs in [
+            ("dense_gemm", {}),
+            ("convolution", {"tops": 8.0, "kernel_size": 3}),
+            ("transformer", {"tops": 20.0, "sequence_length": 512}),
+        ]:
+            prog = self._compile(workload, **kwargs)
+            found.update(op["op_type"] for op in prog.lowered_program)
+        self.assertTrue(required.issubset(found), f"Missing op types: {required - found}")
+
+    def test_lowered_op_serialises_to_dict(self) -> None:
+        from create_npu.compiler import LoweredOp
+        op = LoweredOp(
+            name="test_op",
+            op_type="relu",
+            hardware_primitive="vector_elementwise",
+            inputs=["in_tensor"],
+            outputs=["out_tensor"],
+            fusable_with_next=False,
+            params={"shape": [16, 16]},
+        )
+        d = op.to_dict()
+        self.assertEqual(d["name"], "test_op")
+        self.assertEqual(d["op_type"], "relu")
+        self.assertEqual(d["inputs"], ["in_tensor"])
+        self.assertFalse(d["fusable_with_next"])
+
+
+class DispatchScheduleTest(unittest.TestCase):
+    def _compile(self, workload_type: str, tops: float = 4.0, **kwargs) -> object:
+        spec = RequirementSpec(
+            original_text=f"NPU INT8 {tops} TOPS {workload_type} batch 1.",
+            numeric_precision="INT8",
+            throughput_value=tops,
+            throughput_unit="TOPS",
+            workload_type=workload_type,
+            batch_min=1,
+            batch_max=kwargs.get("batch_max", 1),
+            target_frequency_mhz=1000.0,
+            kernel_size=kwargs.get("kernel_size"),
+            sequence_length=kwargs.get("sequence_length"),
+        )
+        return compile_seed_program(spec=spec, architecture=plan_architecture(spec))
+
+    def test_dispatch_schedule_present(self) -> None:
+        program = self._compile("dense_gemm")
+        self.assertIn("dispatch_schedule", program.to_dict())
+        self.assertIsInstance(program.dispatch_schedule, dict)
+
+    def test_dispatch_schedule_has_required_fields(self) -> None:
+        program = self._compile("dense_gemm")
+        ds = program.dispatch_schedule
+        for key in ("entries", "total_issue_cycles", "total_completion_cycles",
+                    "barrier_count", "stall_cycles", "raw_hazard_count",
+                    "engine_utilization"):
+            self.assertIn(key, ds, msg=f"Missing key: {key}")
+
+    def test_dense_gemm_first_entry_is_compute(self) -> None:
+        program = self._compile("dense_gemm")
+        entries = program.dispatch_schedule["entries"]
+        self.assertEqual(entries[0]["engine"], "compute")
+        self.assertFalse(entries[0]["barrier_before"])
+
+    def test_dense_gemm_relu_has_raw_dep_and_barrier(self) -> None:
+        program = self._compile("dense_gemm")
+        entries = program.dispatch_schedule["entries"]
+        relu_entry = next(e for e in entries if e["op_name"] == "relu_post_gemm")
+        self.assertIn("gemm_main", relu_entry["depends_on"])
+        self.assertTrue(relu_entry["barrier_before"])
+
+    def test_issue_cycle_ordering(self) -> None:
+        program = self._compile("dense_gemm")
+        entries = program.dispatch_schedule["entries"]
+        # Each entry must issue at or after the previous
+        for i in range(1, len(entries)):
+            self.assertGreaterEqual(entries[i]["issue_cycle"], entries[i - 1]["issue_cycle"])
+
+    def test_completion_cycle_geq_issue_plus_latency(self) -> None:
+        program = self._compile("dense_gemm")
+        for entry in program.dispatch_schedule["entries"]:
+            self.assertGreaterEqual(entry["completion_cycle"], entry["issue_cycle"])
+
+    def test_raw_hazard_count_geq_barrier_count(self) -> None:
+        # Every barrier implies a RAW hazard; inverse not necessarily true
+        program = self._compile("dense_gemm")
+        ds = program.dispatch_schedule
+        self.assertGreaterEqual(ds["raw_hazard_count"], ds["barrier_count"])
+
+    def test_engine_utilization_between_0_and_1(self) -> None:
+        program = self._compile("dense_gemm")
+        for eng, util in program.dispatch_schedule["engine_utilization"].items():
+            self.assertGreaterEqual(util, 0.0, msg=f"{eng} utilization < 0")
+            self.assertLessEqual(util, 1.0, msg=f"{eng} utilization > 1")
+
+    def test_transformer_has_multiple_entries(self) -> None:
+        program = self._compile("transformer", tops=20.0, sequence_length=512)
+        entries = program.dispatch_schedule["entries"]
+        self.assertGreater(len(entries), 5)
+
+    def test_dispatch_entry_serialises_to_dict(self) -> None:
+        from create_npu.compiler import DispatchEntry
+        entry = DispatchEntry(
+            op_name="test_gemm",
+            engine="compute",
+            depends_on=[],
+            barrier_before=False,
+            issue_cycle=0,
+            completion_cycle=4,
+            stall_cycles=0,
+        )
+        d = entry.to_dict()
+        self.assertEqual(d["op_name"], "test_gemm")
+        self.assertEqual(d["engine"], "compute")
+        self.assertEqual(d["completion_cycle"], 4)
+        self.assertFalse(d["barrier_before"])
+
+
+class GemminiReferenceTest(unittest.TestCase):
+    def _make_architecture(
+        self,
+        estimated_tops: float = 10.0,
+        family: str = "tiled_systolic_array",
+        tile_rows: int = 16,
+        tile_cols: int = 16,
+        tile_count: int = 4,
+        pe_count: int = 1024,
+        local_sram_kb_per_tile: int = 256,
+    ) -> ArchitectureCandidate:
+        return ArchitectureCandidate(
+            candidate_id="balanced",
+            family=family,
+            tile_rows=tile_rows,
+            tile_cols=tile_cols,
+            tile_count=tile_count,
+            pe_rows=tile_rows,
+            pe_cols=tile_cols * tile_count,
+            pe_count=pe_count,
+            local_sram_kb_per_tile=local_sram_kb_per_tile,
+            global_buffer_mb=4,
+            bus_width_bits=512,
+            target_frequency_mhz=1000.0,
+            estimated_tops=estimated_tops,
+            estimated_power_watts=20.0,
+            estimated_area_mm2=1.0,
+        )
+
+    def test_reference_configs_are_complete(self) -> None:
+        required_keys = {
+            "name", "description", "tile_rows", "tile_cols", "tile_count",
+            "dataflow", "local_sram_kb", "accumulator_kb", "bus_width_bits",
+            "frequency_mhz", "estimated_tops", "architecture_family", "benchmark_shapes",
+        }
+        for config_name, config in GEMMINI_REFERENCE_CONFIGS.items():
+            for key in required_keys:
+                self.assertIn(key, config, f"Chiave '{key}' mancante in {config_name}")
+            self.assertGreater(len(config["benchmark_shapes"]), 0, config_name)
+            for shape in config["benchmark_shapes"]:
+                self.assertIn("macs", shape, config_name)
+                self.assertGreater(shape["macs"], 0, config_name)
+
+    def test_select_nearest_reference_small(self) -> None:
+        arch = self._make_architecture(estimated_tops=0.1)
+        self.assertEqual(select_nearest_gemmini_reference(arch), "gemmini_small")
+
+    def test_select_nearest_reference_medium(self) -> None:
+        arch = self._make_architecture(estimated_tops=0.5)
+        self.assertEqual(select_nearest_gemmini_reference(arch), "gemmini_medium")
+
+    def test_select_nearest_reference_large(self) -> None:
+        arch = self._make_architecture(estimated_tops=5.0)
+        self.assertEqual(select_nearest_gemmini_reference(arch), "gemmini_large")
+
+    def test_delta_structure_for_systolic_gemm(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+        )
+        arch = self._make_architecture(estimated_tops=10.0)
+        delta = compute_gemmini_delta(spec=spec, architecture=arch)
+
+        self.assertIn("reference_name", delta)
+        self.assertIn("reference_config", delta)
+        self.assertIn("candidate_vs_reference", delta)
+        self.assertIn("convergence", delta)
+        self.assertIn("convergence_score", delta)
+        self.assertIn("convergence_reasons", delta)
+        self.assertIn("requirement_vs_mapping", delta)
+        self.assertIn("throughput_comparison", delta)
+
+        ref = delta["reference_config"]
+        self.assertIn("dataflow", ref)
+        self.assertIn("local_sram_kb", ref)
+        self.assertIn("estimated_tops", ref)
+
+        cmp = delta["candidate_vs_reference"]
+        self.assertIn("pe_count", cmp)
+        self.assertIn("total_sram_kb", cmp)
+        self.assertIn("estimated_tops", cmp)
+        self.assertIn("dataflow_match", cmp)
+        self.assertIn("architecture_family_match", cmp)
+
+    def test_systolic_gemm_converges(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+        )
+        arch = self._make_architecture(
+            estimated_tops=10.0, family="tiled_systolic_array"
+        )
+        delta = compute_gemmini_delta(spec=spec, architecture=arch)
+        self.assertEqual(delta["convergence"], "converges")
+        self.assertTrue(delta["candidate_vs_reference"]["dataflow_match"])
+        self.assertTrue(delta["candidate_vs_reference"]["architecture_family_match"])
+
+    def test_sparse_workload_diverges(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS sparse.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="sparse_linear_algebra",
+            sparsity_support="structured",
+        )
+        arch = self._make_architecture(
+            estimated_tops=4.0, family="sparse_pe_mesh"
+        )
+        delta = compute_gemmini_delta(spec=spec, architecture=arch)
+        self.assertEqual(delta["convergence"], "diverges")
+        self.assertFalse(delta["candidate_vs_reference"]["dataflow_match"])
+        self.assertFalse(delta["candidate_vs_reference"]["architecture_family_match"])
+
+    def test_throughput_comparison_has_all_benchmarks(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 0.5 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=0.5,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+        )
+        arch = self._make_architecture(estimated_tops=0.5)
+        delta = compute_gemmini_delta(spec=spec, architecture=arch)
+        ref_name = delta["reference_name"]
+        ref_shapes = GEMMINI_REFERENCE_CONFIGS[ref_name]["benchmark_shapes"]
+        self.assertEqual(
+            len(delta["throughput_comparison"]), len(ref_shapes)
+        )
+        for entry in delta["throughput_comparison"]:
+            self.assertIn("benchmark", entry)
+            self.assertIn("macs", entry)
+            self.assertIn("estimated_speedup", entry)
+            self.assertGreater(entry["macs"], 0)
+
+    def test_compiled_program_dataflow_overrides_family_dataflow(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS output-stationary.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            preferred_dataflow="output_stationary",
+        )
+        arch = self._make_architecture(
+            estimated_tops=4.0, family="output_stationary_array"
+        )
+        compiled = {"mapping_plan": {"dataflow": "output_stationary"}}
+        delta = compute_gemmini_delta(spec=spec, architecture=arch, compiled_program=compiled)
+        self.assertFalse(delta["candidate_vs_reference"]["dataflow_match"])
+        self.assertIn("output_stationary", delta["convergence_reasons"][0])
+
+    def test_delta_in_execution_report_summary(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+        )
+        architecture = plan_architecture(spec)
+        with tempfile.TemporaryDirectory() as tmp:
+            from create_npu.rtl_generator import emit_seed_rtl
+            from create_npu.reporting import generate_execution_report
+            bundle = emit_seed_rtl(spec=spec, architecture=architecture, output_dir=Path(tmp))
+            report = generate_execution_report(
+                bundle=bundle, output_dir=Path(tmp), architecture=architecture, spec=spec
+            )
+        self.assertTrue(report["available"])
+        summary = report["summary"]
+        self.assertIn("gemmini_reference_delta", summary)
+        delta = summary["gemmini_reference_delta"]
+        self.assertIn("convergence", delta)
+        self.assertIn("reference_config", delta)
+        self.assertIn("throughput_comparison", delta)
 
 
 class ScoringTest(unittest.TestCase):
@@ -1979,6 +2568,150 @@ class BenchmarkTest(unittest.TestCase):
                             ],
                         },
                     )
+                if case_id == "tensor_descriptor_gemm":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json)],
+                        estimated_effective_tops=1.137778,
+                        workload_type="dense_gemm",
+                        architecture_family="tiled_systolic_array",
+                        compiled_program_summary={
+                            "tiling_strategy": "gemm_blocking",
+                            "problem_shape": {"m": 16, "k": 32, "n": 16},
+                            "mapping_plan": {"dataflow": "weight_stationary"},
+                            "operator_descriptors": [{"op_type": "gemm", "name": "gemm_main"}],
+                            "tensor_descriptors": [
+                                {"role": "activation_input", "dtype": "INT8", "shape": [16, 32], "size_bytes": 512, "base_addr": 0, "stride_bytes": 32, "layout": "row_major", "name": "activation_in", "operator_name": "gemm_main", "requires_transpose": False, "quantization_scale": 1.0, "producer_op": None, "consumer_ops": ["gemm_main"]},
+                                {"role": "weight_input", "dtype": "INT8", "shape": [32, 16], "size_bytes": 512, "base_addr": 0, "stride_bytes": 16, "layout": "row_major", "name": "weight_in", "operator_name": "gemm_main", "requires_transpose": False, "quantization_scale": 1.0, "producer_op": None, "consumer_ops": ["gemm_main"]},
+                                {"role": "output", "dtype": "INT32", "shape": [16, 16], "size_bytes": 1024, "base_addr": 2, "stride_bytes": 64, "layout": "row_major", "name": "result_out", "operator_name": "gemm_main", "requires_transpose": False, "quantization_scale": 1.0, "producer_op": "gemm_main", "consumer_ops": []},
+                            ],
+                        },
+                    )
+                if case_id == "gemmini_reference_delta_gemm":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json)],
+                        estimated_effective_tops=1.137778,
+                        workload_type="dense_gemm",
+                        architecture_family="tiled_systolic_array",
+                        extra_summary={
+                            "gemmini_reference_delta": {
+                                "reference_name": "gemmini_medium",
+                                "reference_config": {
+                                    "dataflow": "weight_stationary",
+                                    "architecture_family": "tiled_systolic_array",
+                                },
+                                "candidate_vs_reference": {
+                                    "dataflow_match": True,
+                                },
+                                "convergence": "converges",
+                            },
+                        },
+                    )
+                if case_id == "dispatch_schedule_gemm":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json)],
+                        estimated_effective_tops=1.137778,
+                        workload_type="dense_gemm",
+                        architecture_family="tiled_systolic_array",
+                        compiled_program_summary={
+                            "tiling_strategy": "gemm_blocking",
+                            "problem_shape": {"m": 16, "k": 32, "n": 16},
+                            "mapping_plan": {"dataflow": "weight_stationary"},
+                            "operator_descriptors": [{"op_type": "gemm", "name": "gemm_main"}],
+                            "dispatch_schedule": {
+                                "total_issue_cycles": 2,
+                                "barrier_count": 1,
+                                "raw_hazard_count": 1,
+                                "entries": [
+                                    {"op_name": "gemm_main", "engine": "compute",
+                                     "barrier_before": False, "depends_on": [],
+                                     "issue_cycle": 0, "completion_cycle": 4, "stall_cycles": 0},
+                                    {"op_name": "relu_post_gemm", "engine": "vector",
+                                     "barrier_before": True, "depends_on": ["gemm_main"],
+                                     "issue_cycle": 5, "completion_cycle": 6, "stall_cycles": 4},
+                                ],
+                            },
+                        },
+                    )
+                if case_id == "lowered_program_ops":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json)],
+                        estimated_effective_tops=1.137778,
+                        workload_type="dense_gemm",
+                        architecture_family="tiled_systolic_array",
+                        compiled_program_summary={
+                            "tiling_strategy": "gemm_blocking",
+                            "problem_shape": {"m": 16, "k": 32, "n": 16},
+                            "mapping_plan": {"dataflow": "weight_stationary"},
+                            "operator_descriptors": [{"op_type": "gemm", "name": "gemm_main"}],
+                            "lowered_program": [
+                                {"op_type": "gemm", "hardware_primitive": "systolic_gemm",
+                                 "fusable_with_next": True, "name": "gemm_main",
+                                 "inputs": ["gemm_main_activation_in", "gemm_main_weight_in"],
+                                 "outputs": ["gemm_main_result_out"],
+                                 "params": {"m": 16, "k": 32, "n": 16}},
+                                {"op_type": "relu", "hardware_primitive": "vector_elementwise",
+                                 "fusable_with_next": False, "name": "relu_post_gemm",
+                                 "inputs": ["gemm_main_result_out"],
+                                 "outputs": ["relu_post_gemm_out"],
+                                 "params": {"shape": [16, 16]}},
+                            ],
+                        },
+                    )
+                if case_id == "memory_planner_gemm":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json)],
+                        estimated_effective_tops=1.137778,
+                        workload_type="dense_gemm",
+                        architecture_family="tiled_systolic_array",
+                        compiled_program_summary={
+                            "tiling_strategy": "gemm_blocking",
+                            "problem_shape": {"m": 16, "k": 32, "n": 16},
+                            "mapping_plan": {"dataflow": "weight_stationary"},
+                            "operator_descriptors": [{"op_type": "gemm", "name": "gemm_main"}],
+                            "memory_plan": {
+                                "operator_count": 1,
+                                "tensor_count": 3,
+                                "peak_sram_bytes_no_reuse": 2048,
+                                "peak_sram_bytes_with_reuse": 2048,
+                                "reuse_savings_pct": 0.0,
+                            },
+                        },
+                    )
                 if case_id == "llm_fallback_capture":
                     llm_request = output_dir / "llm_request.json"
                     llm_request.write_text("{}", encoding="utf-8")
@@ -2010,7 +2743,7 @@ class BenchmarkTest(unittest.TestCase):
                 )
 
             self.assertTrue(payload["passed"])
-            self.assertEqual(len(payload["cases"]), 4)
+            self.assertEqual(len(payload["cases"]), 9)
             self.assertTrue(Path(payload["summary_path"]).exists())
 
     def test_regression_benchmark_reports_missing_toolchain(self) -> None:
@@ -2054,6 +2787,7 @@ def _make_fake_pipeline_result(
     workload_type: str = "transformer",
     architecture_family: str = "tiled_systolic_transformer",
     compiled_program_summary: Optional[Dict[str, object]] = None,
+    extra_summary: Optional[Dict[str, object]] = None,
 ) -> PipelineResult:
     architecture = ArchitectureCandidate(
         candidate_id=candidate_id,
@@ -2162,6 +2896,7 @@ def _make_fake_pipeline_result(
                 "workload_profile": {
                     "workload_type": workload_type if requested_backend == "heuristic" else "dense_gemm",
                 },
+                **(extra_summary or {}),
             },
         },
         environment={

@@ -10,6 +10,7 @@ from create_npu.golden_model import (
     top_npu_context_reference,
     top_npu_reference,
 )
+from create_npu.gemmini_reference import compute_gemmini_delta
 from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle, RequirementSpec
 from create_npu.workloads import (
     get_workload_profile,
@@ -97,6 +98,12 @@ def _build_execution_report(
         architecture=architecture,
         compiled_program=compiled_program,
     )
+    if spec is not None and architecture is not None:
+        summary["gemmini_reference_delta"] = compute_gemmini_delta(
+            spec=spec,
+            architecture=architecture,
+            compiled_program=compiled_program,
+        )
 
     return {
         "available": bool(case_reports),

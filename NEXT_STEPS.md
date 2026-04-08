@@ -98,8 +98,8 @@ Nota:
 - [x] Aggiungere un path minimo di `preload` e `transpose` per studiare casi `output_stationary` senza forzare tutto il mapping sul solo seed systolic attuale.
 - [x] Evolvere lo `scheduler` verso code decoupled `load/store/execute` con hazard tracking minimale e metriche di overlap osservabili tra accesso memoria e compute.
 - [x] Introdurre nel compiler primitive di loop tiled per `gemm` e `convolution`, con doppio buffering esplicito e stima dell'occupancy del cluster durante l'esecuzione.
-- [ ] Aggiungere benchmark e casi di riferimento "Gemmini-like" per confrontare shape, dataflow, memoria locale e throughput stimato del candidato contro una baseline esterna nota.
-- [ ] Salvare nei report un delta esplicito tra requirement, mapping scelto e reference architecture family, cosi' da rendere visibile quando un candidato converge o diverge da una classe tipo Gemmini.
+- [x] Aggiungere benchmark e casi di riferimento "Gemmini-like" per confrontare shape, dataflow, memoria locale e throughput stimato del candidato contro una baseline esterna nota.
+- [x] Salvare nei report un delta esplicito tra requirement, mapping scelto e reference architecture family, cosi' da rendere visibile quando un candidato converge o diverge da una classe tipo Gemmini.
 
 ## Backlog Ispirato a tiny-NPU https://github.com/harishsg993010/tiny-NPU.git
 
@@ -108,10 +108,10 @@ Nota:
 - usare `tiny-NPU` come reference implementation vicina allo stack attuale (`SystemVerilog` + compiler Python + golden model + Verilator), non come top-level da assorbire integralmente;
 - privilegiare i blocchi gia' maturi e riusabili come pattern (`compiler`, `memory planner`, `scoreboard`, `gemm_ctrl`, wrapper di simulazione), evitando di copiare nel breve i path ancora parzialmente stub del top-level originale.
 
-- [ ] Introdurre un formato di `tensor_descriptor` piu' ricco nel compiler ForgeNPU, con shape, dtype, size, base address e metadati sufficienti per una futura esecuzione `graph_mode` o `operator_mode` piu' autonoma.
-- [ ] Aggiungere un `memory planner` con allocazione SRAM, `free` e riuso basato su liveness dei tensori/operatori, riportando nei report peak SRAM con e senza reuse.
-- [ ] Evolvere il compiler da solo `LOAD/COMPUTE/STORE` seed a lowering per operatori concreti, partendo da `Gemm`, `Conv` via `im2col`, `Relu`, `Reduce`, `Concat`, `Slice` e `Pool`.
-- [ ] Introdurre una modalita' di dispatch con `scoreboard` e `barrier` espliciti, separando meglio issue, dipendenze e completamento dei motori rispetto allo scheduler seed corrente.
+- [x] Introdurre un formato di `tensor_descriptor` piu' ricco nel compiler ForgeNPU, con shape, dtype, size, base address e metadati sufficienti per una futura esecuzione `graph_mode` o `operator_mode` piu' autonoma.
+- [x] Aggiungere un `memory planner` con allocazione SRAM, `free` e riuso basato su liveness dei tensori/operatori, riportando nei report peak SRAM con e senza reuse.
+- [x] Evolvere il compiler da solo `LOAD/COMPUTE/STORE` seed a lowering per operatori concreti, partendo da `Gemm`, `Conv` via `im2col`, `Relu`, `Reduce`, `Concat`, `Slice` e `Pool`.
+- [x] Introdurre una modalita' di dispatch con `scoreboard` e `barrier` espliciti, separando meglio issue, dipendenze e completamento dei motori rispetto allo scheduler seed corrente.
 - [ ] Aggiungere performance counters piu' granulari per `compute`, `dma`, `stall`, `overlap` e occupazione effettiva del cluster, cosi' da rendere confrontabili i candidati anche oltre pass/fail e throughput grezzo.
 - [ ] Introdurre un path di accumulo dedicato stile `ACC SRAM` o `accumulator_buffer` per il `gemm_ctrl`, cosi' da supportare K-tiling reale, partial sums persistenti e writeback differito.
 - [ ] Preparare un wrapper di simulazione dedicato per un futuro `graph_mode` o `operator_mode`, separato dal `top_npu` principale, per verificare compiler, descriptors, DMA e motori senza bloccare l'integrazione top-level definitiva.

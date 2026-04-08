@@ -138,6 +138,118 @@ def _benchmark_cases(llm_model: Optional[str]) -> List[Dict[str, Any]]:
             "required_supporting_files": ["compiled_program.json"],
         },
         {
+            "case_id": "tensor_descriptor_gemm",
+            "description": (
+                "Verifica che compiled_program esponga tensor_descriptors con shape, dtype, "
+                "size_bytes e base_addr per un candidato dense GEMM."
+            ),
+            "requirement": "Voglio una NPU INT8 da 4 TOPS per dense GEMM con batch 1.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "tensor_descriptors", 0, "role"), "activation_input"),
+                (("compiled_program", "tensor_descriptors", 0, "dtype"), "INT8"),
+                (("compiled_program", "tensor_descriptors", 1, "role"), "weight_input"),
+                (("compiled_program", "tensor_descriptors", 2, "role"), "output"),
+                (("compiled_program", "tensor_descriptors", 2, "dtype"), "INT32"),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
+            "case_id": "gemmini_reference_delta_gemm",
+            "description": (
+                "Verifica che il report esponga gemmini_reference_delta con convergence, "
+                "reference_config e throughput_comparison per un candidato dense GEMM."
+            ),
+            "requirement": "Voglio una NPU INT8 da 10 TOPS per dense GEMM con batch 1.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("gemmini_reference_delta", "reference_name"), "gemmini_medium"),
+                (("gemmini_reference_delta", "reference_config", "dataflow"), "weight_stationary"),
+                (("gemmini_reference_delta", "candidate_vs_reference", "dataflow_match"), True),
+                (("gemmini_reference_delta", "convergence"), "converges"),
+                (("gemmini_reference_delta", "reference_config", "architecture_family"), "tiled_systolic_array"),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
+            "case_id": "dispatch_schedule_gemm",
+            "description": (
+                "Verifica che compiled_program esponga dispatch_schedule con entries, barrier_count, "
+                "RAW hazard e engine_utilization per un candidato dense GEMM."
+            ),
+            "requirement": "Voglio una NPU INT8 da 4 TOPS per dense GEMM con batch 1.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "dispatch_schedule", "total_issue_cycles"), 2),
+                (("compiled_program", "dispatch_schedule", "barrier_count"), 1),
+                (("compiled_program", "dispatch_schedule", "raw_hazard_count"), 1),
+                (("compiled_program", "dispatch_schedule", "entries", 0, "engine"), "compute"),
+                (("compiled_program", "dispatch_schedule", "entries", 0, "barrier_before"), False),
+                (("compiled_program", "dispatch_schedule", "entries", 1, "engine"), "vector"),
+                (("compiled_program", "dispatch_schedule", "entries", 1, "barrier_before"), True),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
+            "case_id": "lowered_program_ops",
+            "description": (
+                "Verifica che compiled_program esponga lowered_program con Gemm e Relu "
+                "per un candidato dense GEMM, con hardware_primitive e fusability corretti."
+            ),
+            "requirement": "Voglio una NPU INT8 da 4 TOPS per dense GEMM con batch 1.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "lowered_program", 0, "op_type"), "gemm"),
+                (("compiled_program", "lowered_program", 0, "hardware_primitive"), "systolic_gemm"),
+                (("compiled_program", "lowered_program", 0, "fusable_with_next"), True),
+                (("compiled_program", "lowered_program", 1, "op_type"), "relu"),
+                (("compiled_program", "lowered_program", 1, "hardware_primitive"), "vector_elementwise"),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
+            "case_id": "memory_planner_gemm",
+            "description": (
+                "Verifica che compiled_program esponga memory_plan con peak SRAM no-reuse, "
+                "with-reuse e reuse_savings_pct per un candidato dense GEMM."
+            ),
+            "requirement": "Voglio una NPU INT8 da 4 TOPS per dense GEMM con batch 1.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("compiled_program", "memory_plan", "operator_count"), 1),
+                (("compiled_program", "memory_plan", "tensor_count"), 3),
+                (("compiled_program", "memory_plan", "peak_sram_bytes_no_reuse"), 2048),
+                (("compiled_program", "memory_plan", "peak_sram_bytes_with_reuse"), 2048),
+                (("compiled_program", "memory_plan", "reuse_savings_pct"), 0.0),
+            ],
+            "required_supporting_files": ["compiled_program.json"],
+        },
+        {
             "case_id": "llm_fallback_capture",
             "description": "Regressione del fallback LLM con artifact di richiesta persistiti.",
             "requirement": "Voglio una NPU INT8 da 10 TOPS per dense GEMM.",

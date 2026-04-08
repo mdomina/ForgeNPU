@@ -42,6 +42,10 @@ REQUIRED_COMPILED_PROGRAM_FIELDS = [
     "operator_descriptors",
     "mapping_plan",
     "estimated_mac_operations",
+    "tensor_descriptors",
+    "memory_plan",
+    "lowered_program",
+    "dispatch_schedule",
 ]
 
 

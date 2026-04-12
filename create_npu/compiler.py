@@ -163,6 +163,7 @@ class CompiledProgram:
     memory_plan: Dict[str, Any] = field(default_factory=dict)
     lowered_program: List[Dict[str, Any]] = field(default_factory=list)
     dispatch_schedule: Dict[str, Any] = field(default_factory=dict)
+    gemm_accumulation: Dict[str, Any] = field(default_factory=dict)
     rationale: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -317,6 +318,22 @@ def compile_seed_program(
         f"{dispatch_schedule.get('raw_hazard_count', 0)} RAW hazard, "
         f"{dispatch_schedule.get('stall_cycles', 0)} stall cycles."
     )
+    gemm_accumulation = _gemm_accumulation_plan(
+        spec=spec,
+        problem_shape=problem_shape,
+        tile_rows=tile_rows,
+        tile_cols=tile_cols,
+        active_tile_count=active_tile_count,
+        store_burst_count=store_burst_count,
+        lowered_program=lowered_program,
+    )
+    rationale.append(
+        "GEMM accumulation path: "
+        f"controller={gemm_accumulation.get('controller_module', 'gemm_ctrl')}, "
+        f"k_tiles={gemm_accumulation.get('k_tile_count', 0)}, "
+        f"persistent_psums={'si' if gemm_accumulation.get('partial_sum_persistence') else 'no'}, "
+        f"deferred_writeback={'si' if gemm_accumulation.get('deferred_writeback') else 'no'}."
+    )
 
     return CompiledProgram(
         name=f"{spec.workload_type}_{spec.execution_mode}_seed_program",
@@ -353,6 +370,7 @@ def compile_seed_program(
         memory_plan=memory_plan,
         lowered_program=lowered_program,
         dispatch_schedule=dispatch_schedule,
+        gemm_accumulation=gemm_accumulation,
         rationale=rationale,
     )
 
@@ -1110,6 +1128,58 @@ def _lower_gemm(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:
             params={"shape": [m, n]},
         ).to_dict(),
     ]
+
+
+def _gemm_accumulation_plan(
+    spec: RequirementSpec,
+    problem_shape: Dict[str, int],
+    tile_rows: int,
+    tile_cols: int,
+    active_tile_count: int,
+    store_burst_count: int,
+    lowered_program: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    reduction_dim = _reduction_dim_for_accumulation(
+        spec=spec,
+        problem_shape=problem_shape,
+        lowered_program=lowered_program,
+    )
+    k_tile_width = max(1, tile_cols)
+    k_tile_count = max(1, math.ceil(reduction_dim / float(k_tile_width)))
+    output_tile_cols = max(1, tile_cols * active_tile_count)
+    return {
+        "enabled": True,
+        "controller_module": "gemm_ctrl",
+        "accumulator_storage": "accumulator_buffer",
+        "reduction_dim": reduction_dim,
+        "k_tile_width": k_tile_width,
+        "k_tile_count": k_tile_count,
+        "partial_sum_persistence": k_tile_count > 1,
+        "deferred_writeback": k_tile_count > 1,
+        "writeback_policy": "explicit_final_k_tile" if k_tile_count > 1 else "per_output_tile",
+        "output_tile_rows": max(1, tile_rows),
+        "output_tile_cols": output_tile_cols,
+        "accumulator_depth_tiles": max(1, store_burst_count),
+    }
+
+
+def _reduction_dim_for_accumulation(
+    spec: RequirementSpec,
+    problem_shape: Dict[str, int],
+    lowered_program: List[Dict[str, Any]],
+) -> int:
+    for op in lowered_program:
+        params = op.get("params", {})
+        if "k" in params:
+            return max(1, int(params["k"]))
+        if op.get("op_type") == "conv2d":
+            input_channels = int(problem_shape.get("input_channels", 1))
+            kernel_height = int(problem_shape.get("kernel_height", 1))
+            kernel_width = int(problem_shape.get("kernel_width", 1))
+            return max(1, input_channels * kernel_height * kernel_width)
+    if spec.workload_type == "transformer":
+        return max(1, int(problem_shape.get("hidden_dim", 1)))
+    return max(1, int(problem_shape.get("k", problem_shape.get("input_channels", 1))))
 
 
 def _lower_convolution(problem_shape: Dict[str, int]) -> List[Dict[str, Any]]:

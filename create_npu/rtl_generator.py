@@ -89,6 +89,16 @@ def emit_seed_rtl(
         encoding="utf-8",
     )
 
+    gemm_ctrl_path = rtl_dir / "gemm_ctrl.sv"
+    gemm_ctrl_path.write_text(
+        _gemm_ctrl_template(
+            acc_width=acc_width,
+            seed_rows=seed_tile_rows,
+            seed_cols=seed_tile_cols,
+        ),
+        encoding="utf-8",
+    )
+
     dma_engine_path = rtl_dir / "dma_engine.sv"
     dma_engine_path.write_text(
         _dma_engine_template(
@@ -183,6 +193,12 @@ def emit_seed_rtl(
     accumulator_tb_path = tb_dir / "accumulator_buffer_tb.sv"
     accumulator_tb_path.write_text(
         _accumulator_buffer_tb_template(acc_width=acc_width),
+        encoding="utf-8",
+    )
+
+    gemm_ctrl_tb_path = tb_dir / "gemm_ctrl_tb.sv"
+    gemm_ctrl_tb_path.write_text(
+        _gemm_ctrl_tb_template(acc_width=acc_width),
         encoding="utf-8",
     )
 
@@ -281,13 +297,16 @@ def emit_seed_rtl(
         )
 
     notes.append(
-        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `accumulator_buffer`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`."
+        "Il bundle seed include `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `accumulator_buffer`, `gemm_ctrl`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`."
     )
     notes.append(
         "Il cluster seed separa ora il control-path nel modulo `cluster_control` e il fanout multi-tile nel modulo `cluster_interconnect`, lasciando a `top_npu` il solo assemblaggio del top-level."
     )
     notes.append(
         "Il path di store del tile passa da un `accumulator_buffer` separato, con hook seed per scaling e bias in readback."
+    )
+    notes.append(
+        "Il seed introduce anche `gemm_ctrl`, un controller dedicato per accumulo su piu' K-tile con partial sums persistenti e writeback differito."
     )
     notes.append(
         "Compiler seed attivo: programma `LOAD/COMPUTE/STORE` compilato con "
@@ -307,6 +326,7 @@ def emit_seed_rtl(
             str(dma_engine_path),
             str(scratchpad_controller_path),
             str(accumulator_buffer_path),
+            str(gemm_ctrl_path),
             str(tile_compute_unit_path),
             str(scheduler_path),
             str(cluster_control_path),
@@ -321,6 +341,7 @@ def emit_seed_rtl(
             str(dma_tb_path),
             str(scratchpad_tb_path),
             str(accumulator_tb_path),
+            str(gemm_ctrl_tb_path),
             str(tile_compute_tb_path),
             str(scheduler_tb_path),
             str(cluster_control_tb_path),
@@ -1757,6 +1778,297 @@ def _accumulator_buffer_tb_template(acc_width: int) -> str:
     expect_buffer(0, 0, 0, 0, 0, 0, 0, 0, 4'b0000, 1'b0);
 
     $display("accumulator_buffer_tb passed");
+    $finish;
+  end
+endmodule
+"""
+
+
+def _gemm_ctrl_template(acc_width: int, seed_rows: int, seed_cols: int) -> str:
+    return f"""module gemm_ctrl #(
+  parameter int ACC_WIDTH = {acc_width},
+  parameter int ROWS = {seed_rows},
+  parameter int COLS = {seed_cols},
+  parameter int PE_COUNT = ROWS * COLS,
+  parameter int SCALE_SHIFT_WIDTH = 4,
+  parameter int K_TILE_COUNTER_WIDTH = 8
+) (
+  input  logic clk,
+  input  logic rst_n,
+  input  logic issue_i,
+  input  logic accumulate_i,
+  input  logic final_k_tile_i,
+  input  logic clear_i,
+  input  logic writeback_en_i,
+  input  logic [SCALE_SHIFT_WIDTH-1:0] read_scale_shift_i,
+  input  logic apply_bias_i,
+  input  logic signed [PE_COUNT*ACC_WIDTH-1:0] bias_i,
+  input  logic signed [PE_COUNT*ACC_WIDTH-1:0] partial_psums_i,
+  output logic signed [PE_COUNT*ACC_WIDTH-1:0] accumulated_psums_o,
+  output logic signed [PE_COUNT*ACC_WIDTH-1:0] writeback_o,
+  output logic [PE_COUNT-1:0] writeback_valid_mask_o,
+  output logic accumulator_valid_o,
+  output logic writeback_pending_o,
+  output logic [K_TILE_COUNTER_WIDTH-1:0] k_tiles_completed_o
+);
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] capture_psums;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] stored_psums;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] readback_psums;
+  logic [PE_COUNT-1:0] readback_valid_mask;
+  logic accumulator_valid_internal;
+  genvar lane_idx;
+
+  generate
+    for (lane_idx = 0; lane_idx < PE_COUNT; lane_idx = lane_idx + 1) begin : gen_accumulate
+      wire signed [ACC_WIDTH-1:0] lane_partial =
+        $signed(partial_psums_i[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      wire signed [ACC_WIDTH-1:0] lane_stored =
+        $signed(stored_psums[lane_idx*ACC_WIDTH +: ACC_WIDTH]);
+      assign capture_psums[lane_idx*ACC_WIDTH +: ACC_WIDTH] =
+        (accumulate_i && accumulator_valid_internal) ? (lane_stored + lane_partial) : lane_partial;
+    end
+  endgenerate
+
+  accumulator_buffer #(
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS),
+    .SCALE_SHIFT_WIDTH(SCALE_SHIFT_WIDTH)
+  ) accumulator_inst (
+    .clk(clk),
+    .rst_n(rst_n),
+    .capture_en_i(issue_i),
+    .clear_i(clear_i),
+    .psums_i(capture_psums),
+    .store_en_i(writeback_en_i && writeback_pending_o),
+    .read_scale_shift_i(read_scale_shift_i),
+    .apply_bias_i(apply_bias_i),
+    .bias_i(bias_i),
+    .psums_o(stored_psums),
+    .readback_o(readback_psums),
+    .readback_valid_mask_o(readback_valid_mask),
+    .buffer_valid_o(accumulator_valid_internal)
+  );
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      writeback_pending_o <= 1'b0;
+      k_tiles_completed_o <= '0;
+    end else if (clear_i) begin
+      writeback_pending_o <= 1'b0;
+      k_tiles_completed_o <= '0;
+    end else if (issue_i) begin
+      if (accumulate_i && accumulator_valid_internal) begin
+        k_tiles_completed_o <= k_tiles_completed_o + 1'b1;
+      end else begin
+        k_tiles_completed_o <= 'd1;
+        writeback_pending_o <= 1'b0;
+      end
+      if (final_k_tile_i) begin
+        writeback_pending_o <= 1'b1;
+      end
+    end
+  end
+
+  assign accumulated_psums_o = stored_psums;
+  assign writeback_o = readback_psums;
+  assign writeback_valid_mask_o = readback_valid_mask;
+  assign accumulator_valid_o = accumulator_valid_internal;
+endmodule
+"""
+
+
+def _gemm_ctrl_tb_template(acc_width: int) -> str:
+    return f"""module gemm_ctrl_tb;
+  localparam int ACC_WIDTH = {acc_width};
+  localparam int ROWS = 2;
+  localparam int COLS = 2;
+  localparam int PE_COUNT = ROWS * COLS;
+
+  logic clk;
+  logic rst_n;
+  logic issue_i;
+  logic accumulate_i;
+  logic final_k_tile_i;
+  logic clear_i;
+  logic writeback_en_i;
+  logic [3:0] read_scale_shift_i;
+  logic apply_bias_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] bias_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] partial_psums_i;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] accumulated_psums_o;
+  logic signed [PE_COUNT*ACC_WIDTH-1:0] writeback_o;
+  logic [PE_COUNT-1:0] writeback_valid_mask_o;
+  logic accumulator_valid_o;
+  logic writeback_pending_o;
+  logic [7:0] k_tiles_completed_o;
+
+  gemm_ctrl #(
+    .ACC_WIDTH(ACC_WIDTH),
+    .ROWS(ROWS),
+    .COLS(COLS)
+  ) dut (
+    .clk(clk),
+    .rst_n(rst_n),
+    .issue_i(issue_i),
+    .accumulate_i(accumulate_i),
+    .final_k_tile_i(final_k_tile_i),
+    .clear_i(clear_i),
+    .writeback_en_i(writeback_en_i),
+    .read_scale_shift_i(read_scale_shift_i),
+    .apply_bias_i(apply_bias_i),
+    .bias_i(bias_i),
+    .partial_psums_i(partial_psums_i),
+    .accumulated_psums_o(accumulated_psums_o),
+    .writeback_o(writeback_o),
+    .writeback_valid_mask_o(writeback_valid_mask_o),
+    .accumulator_valid_o(accumulator_valid_o),
+    .writeback_pending_o(writeback_pending_o),
+    .k_tiles_completed_o(k_tiles_completed_o)
+  );
+
+  always #5 clk = ~clk;
+
+  task automatic idle_inputs;
+    begin
+      issue_i = 1'b0;
+      accumulate_i = 1'b0;
+      final_k_tile_i = 1'b0;
+      clear_i = 1'b0;
+      writeback_en_i = 1'b0;
+      read_scale_shift_i = 4'd0;
+      apply_bias_i = 1'b0;
+      bias_i = '0;
+      partial_psums_i = '0;
+    end
+  endtask
+
+  task automatic issue_tile(
+    input logic accumulate,
+    input logic final_tile,
+    input integer p0,
+    input integer p1,
+    input integer p2,
+    input integer p3
+  );
+    begin
+      idle_inputs();
+      issue_i = 1'b1;
+      accumulate_i = accumulate;
+      final_k_tile_i = final_tile;
+      partial_psums_i[0 +: ACC_WIDTH] = p0;
+      partial_psums_i[ACC_WIDTH +: ACC_WIDTH] = p1;
+      partial_psums_i[2*ACC_WIDTH +: ACC_WIDTH] = p2;
+      partial_psums_i[3*ACC_WIDTH +: ACC_WIDTH] = p3;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic request_writeback(
+    input integer shift,
+    input logic apply_bias_arg,
+    input integer b0,
+    input integer b1,
+    input integer b2,
+    input integer b3
+  );
+    begin
+      idle_inputs();
+      writeback_en_i = 1'b1;
+      read_scale_shift_i = shift[3:0];
+      apply_bias_i = apply_bias_arg;
+      bias_i[0 +: ACC_WIDTH] = b0;
+      bias_i[ACC_WIDTH +: ACC_WIDTH] = b1;
+      bias_i[2*ACC_WIDTH +: ACC_WIDTH] = b2;
+      bias_i[3*ACC_WIDTH +: ACC_WIDTH] = b3;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic clear_controller;
+    begin
+      idle_inputs();
+      clear_i = 1'b1;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task automatic expect_state(
+    input integer a0,
+    input integer a1,
+    input integer a2,
+    input integer a3,
+    input integer w0,
+    input integer w1,
+    input integer w2,
+    input integer w3,
+    input logic [PE_COUNT-1:0] expected_mask,
+    input logic expected_valid,
+    input logic expected_pending,
+    input integer expected_k_tiles
+  );
+    begin
+      if ($signed(accumulated_psums_o[0 +: ACC_WIDTH]) !== a0 ||
+          $signed(accumulated_psums_o[ACC_WIDTH +: ACC_WIDTH]) !== a1 ||
+          $signed(accumulated_psums_o[2*ACC_WIDTH +: ACC_WIDTH]) !== a2 ||
+          $signed(accumulated_psums_o[3*ACC_WIDTH +: ACC_WIDTH]) !== a3 ||
+          $signed(writeback_o[0 +: ACC_WIDTH]) !== w0 ||
+          $signed(writeback_o[ACC_WIDTH +: ACC_WIDTH]) !== w1 ||
+          $signed(writeback_o[2*ACC_WIDTH +: ACC_WIDTH]) !== w2 ||
+          $signed(writeback_o[3*ACC_WIDTH +: ACC_WIDTH]) !== w3 ||
+          writeback_valid_mask_o !== expected_mask ||
+          accumulator_valid_o !== expected_valid ||
+          writeback_pending_o !== expected_pending ||
+          k_tiles_completed_o !== expected_k_tiles[7:0]) begin
+        $fatal(
+          1,
+          "gemm_ctrl_tb failed: expected accum=(%0d %0d %0d %0d) writeback=(%0d %0d %0d %0d) mask=%0b valid=%0d pending=%0d k_tiles=%0d got accum=(%0d %0d %0d %0d) writeback=(%0d %0d %0d %0d) mask=%0b valid=%0d pending=%0d k_tiles=%0d",
+          a0, a1, a2, a3,
+          w0, w1, w2, w3,
+          expected_mask,
+          expected_valid,
+          expected_pending,
+          expected_k_tiles,
+          $signed(accumulated_psums_o[0 +: ACC_WIDTH]),
+          $signed(accumulated_psums_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(accumulated_psums_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(accumulated_psums_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(writeback_o[0 +: ACC_WIDTH]),
+          $signed(writeback_o[ACC_WIDTH +: ACC_WIDTH]),
+          $signed(writeback_o[2*ACC_WIDTH +: ACC_WIDTH]),
+          $signed(writeback_o[3*ACC_WIDTH +: ACC_WIDTH]),
+          writeback_valid_mask_o,
+          accumulator_valid_o,
+          writeback_pending_o,
+          k_tiles_completed_o
+        );
+      end
+    end
+  endtask
+
+  initial begin
+    clk = 1'b0;
+    rst_n = 1'b0;
+    idle_inputs();
+    repeat (2) @(posedge clk);
+    rst_n = 1'b1;
+
+    issue_tile(1'b0, 1'b0, 12, -8, 20, 4);
+    expect_state(12, -8, 20, 4, 12, -8, 20, 4, 4'b0000, 1'b1, 1'b0, 1);
+
+    issue_tile(1'b1, 1'b1, 4, 8, -4, 12);
+    expect_state(16, 0, 16, 16, 16, 0, 16, 16, 4'b0000, 1'b1, 1'b1, 2);
+
+    request_writeback(2, 1'b1, 1, 2, -1, 0);
+    expect_state(16, 0, 16, 16, 5, 2, 3, 4, 4'b1111, 1'b1, 1'b1, 2);
+
+    clear_controller();
+    expect_state(0, 0, 0, 0, 0, 0, 0, 0, 4'b0000, 1'b0, 1'b0, 0);
+
+    $display("gemm_ctrl_tb passed");
     $finish;
   end
 endmodule
@@ -5766,6 +6078,91 @@ def _reference_cases(compiled_program: Optional[Dict[str, object]] = None) -> Di
                             "readback_o": [0, 0, 0, 0],
                             "readback_valid_mask_o": [0, 0, 0, 0],
                             "buffer_valid_o": 0,
+                        },
+                    },
+                ],
+            }
+        ],
+        "gemm_ctrl": [
+            {
+                "name": "k_tiling_accumulation_and_deferred_writeback",
+                "rows": 2,
+                "cols": 2,
+                "steps": [
+                    {
+                        "issue_i": 1,
+                        "accumulate_i": 0,
+                        "final_k_tile_i": 0,
+                        "clear_i": 0,
+                        "writeback_en_i": 0,
+                        "read_scale_shift_i": 0,
+                        "apply_bias_i": 0,
+                        "bias_i": [0, 0, 0, 0],
+                        "partial_psums_i": [12, -8, 20, 4],
+                        "expected": {
+                            "accumulated_psums_o": [12, -8, 20, 4],
+                            "writeback_o": [12, -8, 20, 4],
+                            "writeback_valid_mask_o": [0, 0, 0, 0],
+                            "accumulator_valid_o": 1,
+                            "writeback_pending_o": 0,
+                            "k_tiles_completed_o": 1,
+                        },
+                    },
+                    {
+                        "issue_i": 1,
+                        "accumulate_i": 1,
+                        "final_k_tile_i": 1,
+                        "clear_i": 0,
+                        "writeback_en_i": 0,
+                        "read_scale_shift_i": 0,
+                        "apply_bias_i": 0,
+                        "bias_i": [0, 0, 0, 0],
+                        "partial_psums_i": [4, 8, -4, 12],
+                        "expected": {
+                            "accumulated_psums_o": [16, 0, 16, 16],
+                            "writeback_o": [16, 0, 16, 16],
+                            "writeback_valid_mask_o": [0, 0, 0, 0],
+                            "accumulator_valid_o": 1,
+                            "writeback_pending_o": 1,
+                            "k_tiles_completed_o": 2,
+                        },
+                    },
+                    {
+                        "issue_i": 0,
+                        "accumulate_i": 0,
+                        "final_k_tile_i": 0,
+                        "clear_i": 0,
+                        "writeback_en_i": 1,
+                        "read_scale_shift_i": 2,
+                        "apply_bias_i": 1,
+                        "bias_i": [1, 2, -1, 0],
+                        "partial_psums_i": [0, 0, 0, 0],
+                        "expected": {
+                            "accumulated_psums_o": [16, 0, 16, 16],
+                            "writeback_o": [5, 2, 3, 4],
+                            "writeback_valid_mask_o": [1, 1, 1, 1],
+                            "accumulator_valid_o": 1,
+                            "writeback_pending_o": 1,
+                            "k_tiles_completed_o": 2,
+                        },
+                    },
+                    {
+                        "issue_i": 0,
+                        "accumulate_i": 0,
+                        "final_k_tile_i": 0,
+                        "clear_i": 1,
+                        "writeback_en_i": 0,
+                        "read_scale_shift_i": 0,
+                        "apply_bias_i": 0,
+                        "bias_i": [0, 0, 0, 0],
+                        "partial_psums_i": [0, 0, 0, 0],
+                        "expected": {
+                            "accumulated_psums_o": [0, 0, 0, 0],
+                            "writeback_o": [0, 0, 0, 0],
+                            "writeback_valid_mask_o": [0, 0, 0, 0],
+                            "accumulator_valid_o": 0,
+                            "writeback_pending_o": 0,
+                            "k_tiles_completed_o": 0,
                         },
                     },
                 ],

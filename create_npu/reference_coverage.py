@@ -11,6 +11,7 @@ REQUIRED_MODULE_SECTIONS = [
     "dma_engine",
     "scratchpad_controller",
     "accumulator_buffer",
+    "gemm_ctrl",
     "scheduler",
     "cluster_control",
     "cluster_interconnect",
@@ -46,6 +47,7 @@ REQUIRED_COMPILED_PROGRAM_FIELDS = [
     "memory_plan",
     "lowered_program",
     "dispatch_schedule",
+    "gemm_accumulation",
 ]
 
 

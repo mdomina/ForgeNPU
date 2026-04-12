@@ -13,9 +13,10 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - specifica strutturata piu' ricca con `execution_mode`, `optimization_priority`, `offchip_memory_type`, `preferred_dataflow`, `sparsity_support`, `sequence_length` e `kernel_size`;
 - generazione di piu' candidate architecture (`balanced`, `throughput_max`, `efficiency`);
 - scoring e selezione automatica del candidato migliore;
-- generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `accumulator_buffer`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`;
+- generazione seed RTL di `mac_unit`, `processing_element`, `systolic_tile`, `dma_engine`, `scratchpad_controller`, `accumulator_buffer`, `gemm_ctrl`, `tile_compute_unit`, `scheduler`, `cluster_control`, `cluster_interconnect` e `top_npu`;
 - `scratchpad_controller` seed con tracciamento di validita' e due banchi selezionabili, coerente con il timing del path DMA/load;
 - `accumulator_buffer` seed separato dallo scratchpad, con partial sums persistenti, readback con scaling/cast e hook minimi per bias;
+- `gemm_ctrl` seed dedicato al path GEMM con accumulo su piu' K-tile, partial sums persistenti sopra `accumulator_buffer` e writeback differito esplicito;
 - selezione reale del dataflow `weight_stationary` / `output_stationary` propagata dal `compiled_program` al path RTL del tile e ai report di esecuzione;
 - path minimo di `preload` e `transpose` sui tile seed per studiare casi `output_stationary` con registri pre-caricati dal compiler;
 - `tile_compute_unit` seed capace di leggere e scrivere banchi distinti dello scratchpad per esperimenti di prefetch/ping-pong locali;
@@ -39,7 +40,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - harness locale per lint, simulazione e sintesi con fallback esplicito, inclusa sintesi `yosys` bounded sui parametri dei casi `top_npu` per mantenere trattabile la regressione;
 - verifica Python rinforzata con casi `top_npu_stress` randomizzati in modo deterministico per backpressure, flush e multi-tile, piu' stress dedicati per `scheduler`, `cluster_control` e `cluster_interconnect`;
 - backend LLM opzionale con chiamata live, output JSON strutturato, override RTL mirati e fallback controllato;
-- compiler seed che traduce workload e requirement in un programma `LOAD/COMPUTE/STORE` esplicito con mapping, shape reali, operator plan e descrittori persistiti;
+- compiler seed che traduce workload e requirement in un programma `LOAD/COMPUTE/STORE` esplicito con mapping, shape reali, operator plan, descrittori persistiti e piano di accumulo `gemm_accumulation` per `gemm_ctrl`;
 - benchmark di regressione arricchito con casi workload-specifici per `transformer`, `convolution`, `sparse_linear_algebra` e fallback LLM, con check espliciti sul `compiled_program`;
 - tool `reference_coverage` che misura copertura quantitativa di moduli, scheduler states, bank selection, tile count e stress tag oltre al golden model booleano;
 - comando `doctor` per diagnosticare tool EDA e stato backend LLM.

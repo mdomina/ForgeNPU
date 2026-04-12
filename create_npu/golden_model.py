@@ -469,6 +469,73 @@ def accumulator_buffer_reference(
     return snapshots
 
 
+def gemm_ctrl_reference(
+    steps: List[Dict[str, object]],
+    rows: int = 2,
+    cols: int = 2,
+) -> List[Dict[str, object]]:
+    pe_count = rows * cols
+    stored_psums = [0 for _ in range(pe_count)]
+    accumulator_valid = False
+    writeback_pending = False
+    k_tiles_completed = 0
+    snapshots: List[Dict[str, object]] = []
+
+    for step in steps:
+        clear = bool(step.get("clear_i", 0))
+        issue = bool(step.get("issue_i", 0))
+        accumulate = bool(step.get("accumulate_i", 0))
+        final_k_tile = bool(step.get("final_k_tile_i", 0))
+
+        if clear:
+            stored_psums = [0 for _ in range(pe_count)]
+            accumulator_valid = False
+            writeback_pending = False
+            k_tiles_completed = 0
+        elif issue:
+            incoming_psums = [int(value) for value in step.get("partial_psums_i", [])]
+            incoming_psums = incoming_psums[:pe_count] + [0 for _ in range(max(0, pe_count - len(incoming_psums)))]
+            if accumulate and accumulator_valid:
+                stored_psums = [
+                    int(stored_psums[lane]) + int(incoming_psums[lane])
+                    for lane in range(pe_count)
+                ]
+                k_tiles_completed += 1
+            else:
+                stored_psums = list(incoming_psums)
+                accumulator_valid = True
+                k_tiles_completed = 1
+                writeback_pending = False
+            accumulator_valid = True
+            if final_k_tile:
+                writeback_pending = True
+
+        scale_shift = int(step.get("read_scale_shift_i", 0))
+        apply_bias = bool(step.get("apply_bias_i", 0))
+        bias_values = [int(value) for value in step.get("bias_i", [])]
+        bias_values = bias_values[:pe_count] + [0 for _ in range(max(0, pe_count - len(bias_values)))]
+        writeback = []
+        for lane, stored_value in enumerate(stored_psums):
+            scaled_value = int(stored_value) >> scale_shift
+            if apply_bias:
+                scaled_value += int(bias_values[lane])
+            writeback.append(scaled_value)
+
+        writeback_fire = bool(step.get("writeback_en_i", 0)) and writeback_pending and accumulator_valid
+        snapshots.append(
+            {
+                "accumulated_psums_o": list(stored_psums),
+                "writeback_o": writeback,
+                "writeback_valid_mask_o": [int(writeback_fire) for _ in range(pe_count)],
+                "accumulator_valid_o": int(accumulator_valid),
+                "writeback_pending_o": int(writeback_pending),
+                "k_tiles_completed_o": int(k_tiles_completed),
+            }
+        )
+
+    return snapshots
+
+
 def scheduler_reference(
     steps: List[Dict[str, object]],
     rows: int = 2,
@@ -984,6 +1051,36 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
                     f"{observed['readback_valid_mask_o']}, {observed['buffer_valid_o']})"
                 )
 
+    for case in payload.get("gemm_ctrl", []):
+        rows = int(case.get("rows", 2))
+        cols = int(case.get("cols", 2))
+        observed_snapshots = gemm_ctrl_reference(
+            steps=case["steps"],
+            rows=rows,
+            cols=cols,
+        )
+        for step_idx, step in enumerate(case["steps"]):
+            expected = step["expected"]
+            observed = observed_snapshots[step_idx]
+            if (
+                observed["accumulated_psums_o"] != expected["accumulated_psums_o"]
+                or observed["writeback_o"] != expected["writeback_o"]
+                or observed["writeback_valid_mask_o"] != expected["writeback_valid_mask_o"]
+                or observed["accumulator_valid_o"] != expected["accumulator_valid_o"]
+                or observed["writeback_pending_o"] != expected["writeback_pending_o"]
+                or observed["k_tiles_completed_o"] != expected["k_tiles_completed_o"]
+            ):
+                failures.append(
+                    "gemm_ctrl/"
+                    f"{case['name']}/step_{step_idx}: expected "
+                    f"({expected['accumulated_psums_o']}, {expected['writeback_o']}, "
+                    f"{expected['writeback_valid_mask_o']}, {expected['accumulator_valid_o']}, "
+                    f"{expected['writeback_pending_o']}, {expected['k_tiles_completed_o']}), got "
+                    f"({observed['accumulated_psums_o']}, {observed['writeback_o']}, "
+                    f"{observed['writeback_valid_mask_o']}, {observed['accumulator_valid_o']}, "
+                    f"{observed['writeback_pending_o']}, {observed['k_tiles_completed_o']})"
+                )
+
     for case in payload.get("dma_engine", []):
         rows = int(case.get("rows", 2))
         cols = int(case.get("cols", 2))
@@ -1292,6 +1389,7 @@ def evaluate_reference_cases(reference_cases_path: str) -> Tuple[bool, str]:
         + sum(len(case["steps"]) for case in payload.get("dma_engine", []))
         + sum(len(case["steps"]) for case in payload.get("scratchpad_controller", []))
         + sum(len(case["steps"]) for case in payload.get("accumulator_buffer", []))
+        + sum(len(case["steps"]) for case in payload.get("gemm_ctrl", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler", []))
         + sum(len(case["steps"]) for case in payload.get("scheduler_stress", []))
         + sum(len(case["steps"]) for case in payload.get("cluster_control", []))

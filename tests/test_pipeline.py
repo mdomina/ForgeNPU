@@ -295,6 +295,30 @@ class CompilerTest(unittest.TestCase):
         self.assertGreater(occ["effective_cycles"], 0)
         self.assertGreater(occ["memory_compute_ratio"], 0)
 
+    def test_compile_gemm_accumulation_plan(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 10 TOPS dense GEMM batch 1-8.",
+            numeric_precision="INT8",
+            throughput_value=10.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            batch_min=1,
+            batch_max=8,
+            target_frequency_mhz=1000.0,
+        )
+        architecture = plan_architecture(spec)
+        program = compile_seed_program(spec=spec, architecture=architecture)
+
+        accumulation = program.gemm_accumulation
+        self.assertTrue(accumulation["enabled"])
+        self.assertEqual(accumulation["controller_module"], "gemm_ctrl")
+        self.assertEqual(accumulation["accumulator_storage"], "accumulator_buffer")
+        self.assertGreater(accumulation["reduction_dim"], 0)
+        self.assertGreater(accumulation["k_tile_count"], 1)
+        self.assertTrue(accumulation["partial_sum_persistence"])
+        self.assertTrue(accumulation["deferred_writeback"])
+        self.assertEqual(accumulation["writeback_policy"], "explicit_final_k_tile")
+
     def test_compile_sparse_has_tiled_loop_nest(self) -> None:
         spec = RequirementSpec(
             original_text="NPU INT8 4 TOPS sparse.",
@@ -1268,6 +1292,15 @@ class PipelineTest(unittest.TestCase):
                     / "candidates"
                     / "balanced"
                     / "rtl"
+                    / "gemm_ctrl.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "rtl"
                     / "tile_compute_unit.sv"
                 ).exists()
             )
@@ -1337,6 +1370,15 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("cluster_interconnect #(", top_npu_rtl)
             self.assertIn("cluster_control #(", top_npu_rtl)
             self.assertIn("accumulator_buffer #(", tile_compute_rtl)
+            gemm_ctrl_rtl = (
+                Path(result.output_dir)
+                / "candidates"
+                / "balanced"
+                / "rtl"
+                / "gemm_ctrl.sv"
+            ).read_text(encoding="utf-8")
+            self.assertIn("module gemm_ctrl", gemm_ctrl_rtl)
+            self.assertIn("accumulator_buffer #(", gemm_ctrl_rtl)
             self.assertIn("tile_store_payloads", top_npu_rtl)
             self.assertTrue(
                 (
@@ -1363,6 +1405,15 @@ class PipelineTest(unittest.TestCase):
                     / "balanced"
                     / "tb"
                     / "accumulator_buffer_tb.sv"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    Path(result.output_dir)
+                    / "candidates"
+                    / "balanced"
+                    / "tb"
+                    / "gemm_ctrl_tb.sv"
                 ).exists()
             )
             self.assertTrue(
@@ -1429,6 +1480,7 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertEqual(len(verification_vectors["top_npu_stress"]), 3)
             self.assertEqual(len(verification_vectors["accumulator_buffer"]), 1)
+            self.assertEqual(len(verification_vectors["gemm_ctrl"]), 1)
             self.assertIn("randomized", verification_vectors["top_npu_stress"][0]["stress_tags"])
             self.assertEqual(len(verification_vectors["scheduler_stress"]), 1)
             self.assertEqual(len(verification_vectors["cluster_control_stress"]), 1)
@@ -1470,6 +1522,12 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertIn("cluster_interconnect", " ".join(payload["generated"]["notes"]))
             self.assertIn("accumulator_buffer", " ".join(payload["generated"]["notes"]))
+            self.assertIn("gemm_ctrl", " ".join(payload["generated"]["notes"]))
+            self.assertIn("gemm_accumulation", compiled_program)
+            self.assertEqual(
+                compiled_program["gemm_accumulation"]["controller_module"],
+                "gemm_ctrl",
+            )
 
             report = payload["report"]
             self.assertTrue(Path(report["path"]).exists())

@@ -64,6 +64,7 @@ def plan_architecture(spec: RequirementSpec, candidate_id: str = "balanced") -> 
         "systolic_tile",
         "scratchpad_controller",
         "accumulator_buffer",
+        "gemm_ctrl",
         "tile_compute_unit",
         "dma_engine",
         "scheduler",

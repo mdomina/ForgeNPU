@@ -1613,6 +1613,39 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(report["summary"]["compute_path"]["flush_cycles"], 4)
             self.assertEqual(report["summary"]["compute_path"]["clear_cycles"], 1)
             self.assertEqual(report["summary"]["compute_path"]["estimated_mac_operations"], 24)
+            self.assertIn("performance_counters", report["summary"])
+            self.assertEqual(
+                report["summary"]["performance_counters"]["compute"]["active_cycles"],
+                5,
+            )
+            self.assertEqual(
+                report["summary"]["performance_counters"]["dma"]["active_cycles"],
+                11,
+            )
+            self.assertEqual(
+                report["summary"]["performance_counters"]["stall"]["total_backpressure_cycles"],
+                3,
+            )
+            self.assertEqual(
+                report["summary"]["performance_counters"]["stall"]["dispatch_barrier_count"],
+                report["summary"]["compiled_program"]["dispatch_schedule"]["barrier_count"],
+            )
+            self.assertEqual(
+                report["summary"]["performance_counters"]["overlap"]["memory_compute_overlap_cycles"],
+                report["summary"]["overlap_metrics"]["memory_compute_overlap_cycles"],
+            )
+            self.assertGreater(
+                report["summary"]["performance_counters"]["cluster_occupancy"][
+                    "runtime_tile_utilization_while_compute_percent"
+                ],
+                0.0,
+            )
+            self.assertGreaterEqual(
+                report["summary"]["performance_counters"]["cluster_occupancy"][
+                    "compiled_compute_bound_occupancy_percent"
+                ],
+                0.0,
+            )
             self.assertTrue(report["summary"]["top_npu_throughput"]["available"])
             self.assertEqual(
                 report["summary"]["top_npu_throughput"]["estimation_model"],
@@ -2037,6 +2070,7 @@ class PipelineTest(unittest.TestCase):
             report_payload = json.loads(Path(result.report["path"]).read_text(encoding="utf-8"))
             self.assertIn("scheduler_queue_metrics", report_payload["summary"])
             self.assertIn("overlap_metrics", report_payload["summary"])
+            self.assertIn("performance_counters", report_payload["summary"])
             self.assertIn("scheduler_status", report_payload["cases"][0]["trace"][0])
             self.assertIn("hazard_wait", report_payload["cases"][0]["trace"][0]["scheduler_status"])
             self.assertIn("load_queue_depth", report_payload["cases"][0]["trace"][0]["scheduler_status"])
@@ -2060,6 +2094,38 @@ class PipelineTest(unittest.TestCase):
             self.assertGreaterEqual(
                 report_payload["summary"]["overlap_metrics"]["memory_compute_overlap_cycles"],
                 report_payload["summary"]["overlap_metrics"]["load_compute_overlap_cycles"],
+            )
+            self.assertEqual(
+                report_payload["summary"]["performance_counters"]["compute"]["active_cycles"],
+                report_payload["summary"]["compute_path"]["compute_cycles"],
+            )
+            self.assertEqual(
+                report_payload["summary"]["performance_counters"]["dma"]["active_cycles"],
+                report_payload["summary"]["memory_path"]["dma_cycles"],
+            )
+            self.assertEqual(
+                report_payload["summary"]["performance_counters"]["stall"]["hazard_wait_cycles"],
+                report_payload["summary"]["scheduler_queue_metrics"]["hazard_wait_cycles"],
+            )
+            self.assertEqual(
+                report_payload["summary"]["performance_counters"]["overlap"][
+                    "memory_compute_overlap_cycles"
+                ],
+                report_payload["summary"]["overlap_metrics"]["memory_compute_overlap_cycles"],
+            )
+            self.assertAlmostEqual(
+                report_payload["summary"]["performance_counters"]["compute"]["duty_cycle"],
+                report_payload["summary"]["compute_path"]["compute_cycles"]
+                / float(report_payload["summary"]["total_cycles"]),
+                places=6,
+            )
+            self.assertGreaterEqual(
+                report_payload["summary"]["performance_counters"]["cluster_occupancy"][
+                    "runtime_tile_utilization_while_compute_percent"
+                ],
+                report_payload["summary"]["performance_counters"]["cluster_occupancy"][
+                    "runtime_tile_utilization_percent"
+                ],
             )
 
     def test_pipeline_archives_dataset_samples(self) -> None:

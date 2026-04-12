@@ -87,6 +87,10 @@ def _build_execution_report(
     )
     compiled_program = payload.get("compiled_program", {})
     summary["compiled_program"] = compiled_program
+    _augment_performance_counters_with_compiled_program(
+        summary=summary,
+        compiled_program=compiled_program,
+    )
     summary["stress_verification"] = _build_stress_verification_summary(top_level_stress_cases)
     summary["internal_stress_verification"] = _build_internal_stress_verification_summary(
         internal_stress_cases
@@ -450,6 +454,78 @@ def _empty_summary() -> Dict[str, Any]:
             "load_compute_overlap_cycles": 0,
             "store_compute_overlap_cycles": 0,
         },
+        "performance_counters": {
+            "compute": {
+                "active_cycles": 0,
+                "inactive_cycles": 0,
+                "duty_cycle": 0.0,
+                "busy_duty_cycle": 0.0,
+                "output_valid_cycles": 0,
+                "flush_cycles": 0,
+                "clear_cycles": 0,
+                "average_valid_lanes_per_compute_cycle": 0.0,
+                "average_valid_lanes_per_total_cycle": 0.0,
+                "estimated_macs_per_compute_cycle": 0.0,
+                "estimated_macs_per_total_cycle": 0.0,
+            },
+            "dma": {
+                "active_cycles": 0,
+                "inactive_cycles": 0,
+                "duty_cycle": 0.0,
+                "activation_cycles": 0,
+                "weight_cycles": 0,
+                "average_bits_per_active_cycle": 0.0,
+                "peak_bits_per_cycle": 0,
+                "accept_cycles": 0,
+                "backpressure_cycles": 0,
+                "accept_ratio": 0.0,
+            },
+            "stall": {
+                "idle_cycles": 0,
+                "hazard_wait_cycles": 0,
+                "dma_backpressure_cycles": 0,
+                "load_backpressure_cycles": 0,
+                "store_backpressure_cycles": 0,
+                "total_backpressure_cycles": 0,
+                "any_stall_signal_cycles": 0,
+                "stall_signal_ratio": 0.0,
+                "dispatch_stall_cycles_estimate": 0,
+                "dispatch_barrier_count": 0,
+                "dispatch_raw_hazard_count": 0,
+            },
+            "overlap": {
+                "memory_compute_overlap_cycles": 0,
+                "dma_compute_overlap_cycles": 0,
+                "load_compute_overlap_cycles": 0,
+                "store_compute_overlap_cycles": 0,
+                "memory_compute_overlap_ratio_vs_compute": 0.0,
+                "dma_compute_overlap_ratio_vs_compute": 0.0,
+                "load_compute_overlap_ratio_vs_compute": 0.0,
+                "store_compute_overlap_ratio_vs_compute": 0.0,
+                "memory_compute_overlap_ratio_vs_total": 0.0,
+            },
+            "cluster_occupancy": {
+                "runtime_tile_capacity_cycles": 0,
+                "runtime_compute_window_tile_capacity_cycles": 0,
+                "runtime_active_compute_tile_cycles": 0,
+                "runtime_tile_utilization_percent": 0.0,
+                "runtime_tile_utilization_while_compute_percent": 0.0,
+                "average_active_tiles_per_compute_cycle": 0.0,
+                "average_active_tiles_per_total_cycle": 0.0,
+                "peak_active_tiles_per_compute_cycle": 0,
+                "runtime_pe_capacity_cycles": 0,
+                "runtime_compute_window_pe_capacity_cycles": 0,
+                "runtime_active_compute_pe_cycles": 0,
+                "runtime_pe_utilization_percent": 0.0,
+                "runtime_pe_utilization_while_compute_percent": 0.0,
+                "average_active_pes_per_compute_cycle": 0.0,
+                "peak_active_pes_per_compute_cycle": 0,
+                "compiled_compute_bound_occupancy_percent": 0.0,
+                "compiled_spatial_utilization_percent": 0.0,
+                "compiled_effective_cycles": 0,
+                "compiled_estimated_overlap_cycles": 0,
+            },
+        },
         "stress_verification": {
             "stress_case_count": 0,
             "stress_cycle_count": 0,
@@ -490,6 +566,16 @@ def _summarize_case_reports(
     control_active_tile_sum = 0
     compute_control_cycle_count = 0
     compute_control_tile_sum = 0
+    valid_lane_total = 0
+    stall_signal_cycles = 0
+    runtime_tile_capacity_cycles = 0
+    runtime_compute_window_tile_capacity_cycles = 0
+    runtime_active_compute_tile_cycles = 0
+    peak_active_tiles_per_compute_cycle = 0
+    runtime_pe_capacity_cycles = 0
+    runtime_compute_window_pe_capacity_cycles = 0
+    runtime_active_compute_pe_cycles = 0
+    peak_active_pes_per_compute_cycle = 0
 
     for case_report in case_reports:
         rows = int(case_report["rows"])
@@ -519,6 +605,16 @@ def _summarize_case_reports(
             interconnect_path = step.get("interconnect_path", {})
             compute_path = step["compute_path"]
             scheduler_status = step.get("scheduler_status", {})
+            tile_capacity = max(
+                len(control_path.get("tile_compute_en", [])),
+                len(control_path.get("tile_dma_valid", [])),
+                len(control_path.get("tile_load_vector_en", [])),
+                len(control_path.get("tile_store_results_en", [])),
+                int(case_report.get("tile_count", 0)),
+                1,
+            )
+            runtime_tile_capacity_cycles += tile_capacity
+            runtime_pe_capacity_cycles += tile_capacity * rows * cols
 
             summary["scheduler_queue_metrics"]["max_load_queue_depth"] = max(
                 summary["scheduler_queue_metrics"]["max_load_queue_depth"],
@@ -602,11 +698,14 @@ def _summarize_case_reports(
                 summary["interconnect_path"]["load_fanout_cycles"] += 1
             if interconnect_compute_active_tiles > 0:
                 summary["interconnect_path"]["compute_fanout_cycles"] += 1
-            if int(interconnect_path.get("dma_backpressure", 0)):
+            dma_backpressure = int(interconnect_path.get("dma_backpressure", 0))
+            load_backpressure = int(interconnect_path.get("load_backpressure", 0))
+            store_backpressure = int(interconnect_path.get("store_backpressure", 0))
+            if dma_backpressure:
                 summary["interconnect_path"]["dma_backpressure_cycles"] += 1
-            if int(interconnect_path.get("load_backpressure", 0)):
+            if load_backpressure:
                 summary["interconnect_path"]["load_backpressure_cycles"] += 1
-            if int(interconnect_path.get("store_backpressure", 0)):
+            if store_backpressure:
                 summary["interconnect_path"]["store_backpressure_cycles"] += 1
             if int(interconnect_path.get("dma_accept", 0)) and interconnect_dma_active_tiles > 0:
                 summary["interconnect_path"]["dma_accept_cycles"] += 1
@@ -661,10 +760,28 @@ def _summarize_case_reports(
                     store_bits_this_cycle,
                 )
 
+            hazard_wait = int(scheduler_status.get("hazard_wait", 0))
+            if hazard_wait or dma_backpressure or load_backpressure or store_backpressure:
+                stall_signal_cycles += 1
+
             if compute_path["compute_en"]:
+                effective_compute_active_tiles = compute_active_tiles or active_tile_count
+                active_pes_this_cycle = effective_compute_active_tiles * rows * cols
                 summary["compute_path"]["compute_cycles"] += 1
                 summary["compute_path"]["estimated_mac_operations"] += int(
                     active_tile_count * rows * cols
+                )
+                runtime_compute_window_tile_capacity_cycles += tile_capacity
+                runtime_compute_window_pe_capacity_cycles += tile_capacity * rows * cols
+                runtime_active_compute_tile_cycles += effective_compute_active_tiles
+                runtime_active_compute_pe_cycles += active_pes_this_cycle
+                peak_active_tiles_per_compute_cycle = max(
+                    peak_active_tiles_per_compute_cycle,
+                    effective_compute_active_tiles,
+                )
+                peak_active_pes_per_compute_cycle = max(
+                    peak_active_pes_per_compute_cycle,
+                    active_pes_this_cycle,
                 )
                 if memory_path["dma_valid"] or memory_path["load_vector_en"] or memory_path["store_valid"]:
                     summary["overlap_metrics"]["memory_compute_overlap_cycles"] += 1
@@ -684,6 +801,7 @@ def _summarize_case_reports(
             if compute_path["valid_lane_count"] > 0:
                 summary["compute_path"]["output_valid_cycles"] += 1
 
+            valid_lane_total += int(compute_path["valid_lane_count"])
             summary["compute_path"]["peak_valid_lanes"] = max(
                 summary["compute_path"]["peak_valid_lanes"],
                 int(compute_path["valid_lane_count"]),
@@ -769,6 +887,19 @@ def _summarize_case_reports(
                 6,
             )
 
+    _populate_performance_counters(
+        summary=summary,
+        valid_lane_total=valid_lane_total,
+        stall_signal_cycles=stall_signal_cycles,
+        runtime_tile_capacity_cycles=runtime_tile_capacity_cycles,
+        runtime_compute_window_tile_capacity_cycles=runtime_compute_window_tile_capacity_cycles,
+        runtime_active_compute_tile_cycles=runtime_active_compute_tile_cycles,
+        peak_active_tiles_per_compute_cycle=peak_active_tiles_per_compute_cycle,
+        runtime_pe_capacity_cycles=runtime_pe_capacity_cycles,
+        runtime_compute_window_pe_capacity_cycles=runtime_compute_window_pe_capacity_cycles,
+        runtime_active_compute_pe_cycles=runtime_active_compute_pe_cycles,
+        peak_active_pes_per_compute_cycle=peak_active_pes_per_compute_cycle,
+    )
     summary["top_npu_throughput"] = _estimate_top_npu_throughput(
         summary=summary,
         architecture=architecture,
@@ -938,6 +1069,192 @@ def _build_dataflow_profile(
     }
 
 
+def _populate_performance_counters(
+    summary: Dict[str, Any],
+    valid_lane_total: int,
+    stall_signal_cycles: int,
+    runtime_tile_capacity_cycles: int,
+    runtime_compute_window_tile_capacity_cycles: int,
+    runtime_active_compute_tile_cycles: int,
+    peak_active_tiles_per_compute_cycle: int,
+    runtime_pe_capacity_cycles: int,
+    runtime_compute_window_pe_capacity_cycles: int,
+    runtime_active_compute_pe_cycles: int,
+    peak_active_pes_per_compute_cycle: int,
+) -> None:
+    total_cycles = int(summary.get("total_cycles", 0))
+    busy_cycles = int(summary.get("busy_cycles", 0))
+    compute_cycles = int(summary.get("compute_path", {}).get("compute_cycles", 0))
+    dma_cycles = int(summary.get("memory_path", {}).get("dma_cycles", 0))
+    estimated_mac_operations = int(summary.get("compute_path", {}).get("estimated_mac_operations", 0))
+    output_valid_cycles = int(summary.get("compute_path", {}).get("output_valid_cycles", 0))
+    flush_cycles = int(summary.get("compute_path", {}).get("flush_cycles", 0))
+    clear_cycles = int(summary.get("compute_path", {}).get("clear_cycles", 0))
+    average_dma_bits = float(summary.get("memory_path", {}).get("average_dma_bits_per_dma_cycle", 0.0))
+    peak_dma_bits = int(summary.get("memory_path", {}).get("peak_dma_bits_per_cycle", 0))
+    dma_accept_cycles = int(summary.get("interconnect_path", {}).get("dma_accept_cycles", 0))
+    dma_backpressure_cycles = int(summary.get("interconnect_path", {}).get("dma_backpressure_cycles", 0))
+    load_backpressure_cycles = int(summary.get("interconnect_path", {}).get("load_backpressure_cycles", 0))
+    store_backpressure_cycles = int(summary.get("interconnect_path", {}).get("store_backpressure_cycles", 0))
+    hazard_wait_cycles = int(summary.get("scheduler_queue_metrics", {}).get("hazard_wait_cycles", 0))
+    overlap_metrics = summary.get("overlap_metrics", {})
+
+    performance = summary["performance_counters"]
+    performance["compute"].update(
+        {
+            "active_cycles": compute_cycles,
+            "inactive_cycles": max(0, total_cycles - compute_cycles),
+            "duty_cycle": _safe_ratio(compute_cycles, total_cycles),
+            "busy_duty_cycle": _safe_ratio(compute_cycles, busy_cycles),
+            "output_valid_cycles": output_valid_cycles,
+            "flush_cycles": flush_cycles,
+            "clear_cycles": clear_cycles,
+            "average_valid_lanes_per_compute_cycle": _safe_ratio(valid_lane_total, compute_cycles),
+            "average_valid_lanes_per_total_cycle": _safe_ratio(valid_lane_total, total_cycles),
+            "estimated_macs_per_compute_cycle": _safe_ratio(
+                estimated_mac_operations,
+                compute_cycles,
+            ),
+            "estimated_macs_per_total_cycle": _safe_ratio(
+                estimated_mac_operations,
+                total_cycles,
+            ),
+        }
+    )
+    performance["dma"].update(
+        {
+            "active_cycles": dma_cycles,
+            "inactive_cycles": max(0, total_cycles - dma_cycles),
+            "duty_cycle": _safe_ratio(dma_cycles, total_cycles),
+            "activation_cycles": int(summary["memory_path"]["dma_activation_cycles"]),
+            "weight_cycles": int(summary["memory_path"]["dma_weight_cycles"]),
+            "average_bits_per_active_cycle": average_dma_bits,
+            "peak_bits_per_cycle": peak_dma_bits,
+            "accept_cycles": dma_accept_cycles,
+            "backpressure_cycles": dma_backpressure_cycles,
+            "accept_ratio": _safe_ratio(dma_accept_cycles, dma_cycles),
+        }
+    )
+    performance["stall"].update(
+        {
+            "idle_cycles": int(summary["idle_cycles"]),
+            "hazard_wait_cycles": hazard_wait_cycles,
+            "dma_backpressure_cycles": dma_backpressure_cycles,
+            "load_backpressure_cycles": load_backpressure_cycles,
+            "store_backpressure_cycles": store_backpressure_cycles,
+            "total_backpressure_cycles": (
+                dma_backpressure_cycles
+                + load_backpressure_cycles
+                + store_backpressure_cycles
+            ),
+            "any_stall_signal_cycles": stall_signal_cycles,
+            "stall_signal_ratio": _safe_ratio(stall_signal_cycles, total_cycles),
+        }
+    )
+    performance["overlap"].update(
+        {
+            "memory_compute_overlap_cycles": int(overlap_metrics.get("memory_compute_overlap_cycles", 0)),
+            "dma_compute_overlap_cycles": int(overlap_metrics.get("dma_compute_overlap_cycles", 0)),
+            "load_compute_overlap_cycles": int(overlap_metrics.get("load_compute_overlap_cycles", 0)),
+            "store_compute_overlap_cycles": int(overlap_metrics.get("store_compute_overlap_cycles", 0)),
+            "memory_compute_overlap_ratio_vs_compute": _safe_ratio(
+                int(overlap_metrics.get("memory_compute_overlap_cycles", 0)),
+                compute_cycles,
+            ),
+            "dma_compute_overlap_ratio_vs_compute": _safe_ratio(
+                int(overlap_metrics.get("dma_compute_overlap_cycles", 0)),
+                compute_cycles,
+            ),
+            "load_compute_overlap_ratio_vs_compute": _safe_ratio(
+                int(overlap_metrics.get("load_compute_overlap_cycles", 0)),
+                compute_cycles,
+            ),
+            "store_compute_overlap_ratio_vs_compute": _safe_ratio(
+                int(overlap_metrics.get("store_compute_overlap_cycles", 0)),
+                compute_cycles,
+            ),
+            "memory_compute_overlap_ratio_vs_total": _safe_ratio(
+                int(overlap_metrics.get("memory_compute_overlap_cycles", 0)),
+                total_cycles,
+            ),
+        }
+    )
+    performance["cluster_occupancy"].update(
+        {
+            "runtime_tile_capacity_cycles": runtime_tile_capacity_cycles,
+            "runtime_compute_window_tile_capacity_cycles": runtime_compute_window_tile_capacity_cycles,
+            "runtime_active_compute_tile_cycles": runtime_active_compute_tile_cycles,
+            "runtime_tile_utilization_percent": _safe_percent(
+                runtime_active_compute_tile_cycles,
+                runtime_tile_capacity_cycles,
+            ),
+            "runtime_tile_utilization_while_compute_percent": _safe_percent(
+                runtime_active_compute_tile_cycles,
+                runtime_compute_window_tile_capacity_cycles,
+            ),
+            "average_active_tiles_per_compute_cycle": _safe_ratio(
+                runtime_active_compute_tile_cycles,
+                compute_cycles,
+            ),
+            "average_active_tiles_per_total_cycle": _safe_ratio(
+                runtime_active_compute_tile_cycles,
+                total_cycles,
+            ),
+            "peak_active_tiles_per_compute_cycle": peak_active_tiles_per_compute_cycle,
+            "runtime_pe_capacity_cycles": runtime_pe_capacity_cycles,
+            "runtime_compute_window_pe_capacity_cycles": runtime_compute_window_pe_capacity_cycles,
+            "runtime_active_compute_pe_cycles": runtime_active_compute_pe_cycles,
+            "runtime_pe_utilization_percent": _safe_percent(
+                runtime_active_compute_pe_cycles,
+                runtime_pe_capacity_cycles,
+            ),
+            "runtime_pe_utilization_while_compute_percent": _safe_percent(
+                runtime_active_compute_pe_cycles,
+                runtime_compute_window_pe_capacity_cycles,
+            ),
+            "average_active_pes_per_compute_cycle": _safe_ratio(
+                runtime_active_compute_pe_cycles,
+                compute_cycles,
+            ),
+            "peak_active_pes_per_compute_cycle": peak_active_pes_per_compute_cycle,
+        }
+    )
+
+
+def _augment_performance_counters_with_compiled_program(
+    summary: Dict[str, Any],
+    compiled_program: Optional[Dict[str, Any]],
+) -> None:
+    compiled_program = compiled_program or {}
+    performance = summary.get("performance_counters", {})
+    stall = performance.get("stall", {})
+    cluster = performance.get("cluster_occupancy", {})
+    dispatch_schedule = compiled_program.get("dispatch_schedule", {})
+    compiled_occupancy = compiled_program.get("cluster_occupancy", {})
+
+    stall.update(
+        {
+            "dispatch_stall_cycles_estimate": int(dispatch_schedule.get("stall_cycles", 0)),
+            "dispatch_barrier_count": int(dispatch_schedule.get("barrier_count", 0)),
+            "dispatch_raw_hazard_count": int(dispatch_schedule.get("raw_hazard_count", 0)),
+        }
+    )
+    cluster.update(
+        {
+            "compiled_compute_bound_occupancy_percent": float(
+                compiled_occupancy.get("compute_bound_occupancy_percent", 0.0)
+            ),
+            "compiled_spatial_utilization_percent": float(
+                compiled_occupancy.get("spatial_utilization_percent", 0.0)
+            ),
+            "compiled_effective_cycles": int(compiled_occupancy.get("effective_cycles", 0)),
+            "compiled_estimated_overlap_cycles": int(
+                compiled_occupancy.get("estimated_overlap_cycles", 0)
+            ),
+        }
+    )
+
+
 def _summarize_trace(
     trace: List[Dict[str, Any]],
     rows: int,
@@ -1045,6 +1362,18 @@ def _estimate_peak_external_bandwidth_gb_per_s(
     target_frequency_mhz: float,
 ) -> float:
     return round((peak_dma_bits_per_cycle * target_frequency_mhz) / 8000.0, 6)
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / float(denominator), 6)
+
+
+def _safe_percent(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round((100.0 * numerator) / float(denominator), 6)
 
 
 def _estimate_bus_bandwidth_gb_per_s(architecture: ArchitectureCandidate) -> float:

@@ -112,7 +112,7 @@ Nota:
 - [x] Aggiungere un `memory planner` con allocazione SRAM, `free` e riuso basato su liveness dei tensori/operatori, riportando nei report peak SRAM con e senza reuse.
 - [x] Evolvere il compiler da solo `LOAD/COMPUTE/STORE` seed a lowering per operatori concreti, partendo da `Gemm`, `Conv` via `im2col`, `Relu`, `Reduce`, `Concat`, `Slice` e `Pool`.
 - [x] Introdurre una modalita' di dispatch con `scoreboard` e `barrier` espliciti, separando meglio issue, dipendenze e completamento dei motori rispetto allo scheduler seed corrente.
-- [ ] Aggiungere performance counters piu' granulari per `compute`, `dma`, `stall`, `overlap` e occupazione effettiva del cluster, cosi' da rendere confrontabili i candidati anche oltre pass/fail e throughput grezzo.
+- [x] Aggiungere performance counters piu' granulari per `compute`, `dma`, `stall`, `overlap` e occupazione effettiva del cluster, cosi' da rendere confrontabili i candidati anche oltre pass/fail e throughput grezzo.
 - [ ] Introdurre un path di accumulo dedicato stile `ACC SRAM` o `accumulator_buffer` per il `gemm_ctrl`, cosi' da supportare K-tiling reale, partial sums persistenti e writeback differito.
 - [ ] Preparare un wrapper di simulazione dedicato per un futuro `graph_mode` o `operator_mode`, separato dal `top_npu` principale, per verificare compiler, descriptors, DMA e motori senza bloccare l'integrazione top-level definitiva.
 - [ ] Rafforzare la regressione con casi end-to-end compiler -> golden -> RTL su grafi piccoli deterministici e fuzz workload-aware, includendo mismatch di shape, overflow SRAM, reuse aggressivo e overlap `DMA+compute`.

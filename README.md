@@ -31,7 +31,7 @@ Il progetto copre oggi un MVP esteso dei primi step della roadmap:
 - `top_npu` parametrico su `TILE_COUNT` che orchestra `scheduler`, `cluster_control`, `cluster_interconnect` e piu' `tile_compute_unit` senza incorporare direttamente il fanout del cluster;
 - testbench SystemVerilog per i moduli seed del compute cluster e del top-level;
 - golden model Python con vettori di verifica salvati negli artifact;
-- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica, depth delle queue dello scheduler, overlap memoria+compute e stima del throughput effettivo del `top_npu`;
+- report di esecuzione con trace del `scheduler`, metriche del path memoria/compute, occupancy dello scratchpad, traffico DMA/store, cicli di flush, bandwidth effettiva/teorica, depth delle queue dello scheduler, overlap memoria+compute, performance counters granulari per `compute`/`dma`/`stall`/occupancy e stima del throughput effettivo del `top_npu`;
 - report di esecuzione con profilo workload esplicito, requirement profile strutturato, famiglia architetturale preferita/selezionata e assunzioni persistite del parser;
 - archivio dataset locale che salva ogni run come sample riusabile e traccia candidati `good`/`bad` con score, report e log dei tool;
 - best-of-N automatico sopra i tre profili seed, con espansione deterministica di varianti quando `--num-candidates` supera i profili base;

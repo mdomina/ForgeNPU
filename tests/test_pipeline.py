@@ -2836,6 +2836,35 @@ class BenchmarkTest(unittest.TestCase):
                             },
                         },
                     )
+                if case_id == "simulation_wrapper_transformer":
+                    compiled_program_json = output_dir / "compiled_program.json"
+                    simulation_wrapper_json = output_dir / "simulation_wrapper_report.json"
+                    compiled_program_json.write_text("{}", encoding="utf-8")
+                    simulation_wrapper_json.write_text("{}", encoding="utf-8")
+                    return _make_fake_pipeline_result(
+                        output_dir=output_dir,
+                        requirement_text=requirement_text,
+                        candidate_id="balanced",
+                        generator_backend="heuristic",
+                        requested_backend="heuristic",
+                        supporting_files=[str(compiled_program_json), str(simulation_wrapper_json)],
+                        estimated_effective_tops=5.688889,
+                        workload_type="transformer",
+                        architecture_family="tiled_systolic_transformer",
+                        extra_summary={
+                            "simulation_wrapper": {
+                                "passed": True,
+                                "case_count": 6,
+                                "deterministic_case_count": 2,
+                                "fuzz_case_count": 4,
+                                "detected_shape_mismatch_count": 1,
+                                "detected_sram_overflow_count": 1,
+                                "detected_reuse_hazard_count": 1,
+                                "detected_dma_compute_overlap_count": 1,
+                                "actual_program_dma_compute_overlap_cycles": 2,
+                            },
+                        },
+                    )
                 if case_id == "llm_fallback_capture":
                     llm_request = output_dir / "llm_request.json"
                     llm_request.write_text("{}", encoding="utf-8")
@@ -2867,7 +2896,7 @@ class BenchmarkTest(unittest.TestCase):
                 )
 
             self.assertTrue(payload["passed"])
-            self.assertEqual(len(payload["cases"]), 9)
+            self.assertEqual(len(payload["cases"]), 10)
             self.assertTrue(Path(payload["summary_path"]).exists())
 
     def test_regression_benchmark_reports_missing_toolchain(self) -> None:
@@ -2941,6 +2970,7 @@ def _make_fake_pipeline_result(
     tool_results = []
     for tool_name in (
         "python_reference",
+        "simulation_wrapper",
         "reference_coverage",
         "verilator_lint",
         "iverilog_sim",
@@ -3019,6 +3049,17 @@ def _make_fake_pipeline_result(
                 },
                 "workload_profile": {
                     "workload_type": workload_type if requested_backend == "heuristic" else "dense_gemm",
+                },
+                "simulation_wrapper": {
+                    "passed": True,
+                    "case_count": 6,
+                    "deterministic_case_count": 2,
+                    "fuzz_case_count": 4,
+                    "detected_shape_mismatch_count": 1,
+                    "detected_sram_overflow_count": 1,
+                    "detected_reuse_hazard_count": 1,
+                    "detected_dma_compute_overlap_count": 1,
+                    "actual_program_dma_compute_overlap_cycles": 2,
                 },
                 **(extra_summary or {}),
             },

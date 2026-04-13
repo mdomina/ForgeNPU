@@ -114,8 +114,8 @@ Nota:
 - [x] Introdurre una modalita' di dispatch con `scoreboard` e `barrier` espliciti, separando meglio issue, dipendenze e completamento dei motori rispetto allo scheduler seed corrente.
 - [x] Aggiungere performance counters piu' granulari per `compute`, `dma`, `stall`, `overlap` e occupazione effettiva del cluster, cosi' da rendere confrontabili i candidati anche oltre pass/fail e throughput grezzo.
 - [x] Introdurre un path di accumulo dedicato stile `ACC SRAM` o `accumulator_buffer` per il `gemm_ctrl`, cosi' da supportare K-tiling reale, partial sums persistenti e writeback differito.
-- [ ] Preparare un wrapper di simulazione dedicato per un futuro `graph_mode` o `operator_mode`, separato dal `top_npu` principale, per verificare compiler, descriptors, DMA e motori senza bloccare l'integrazione top-level definitiva.
-- [ ] Rafforzare la regressione con casi end-to-end compiler -> golden -> RTL su grafi piccoli deterministici e fuzz workload-aware, includendo mismatch di shape, overflow SRAM, reuse aggressivo e overlap `DMA+compute`.
+- [x] Preparare un wrapper di simulazione dedicato per un futuro `graph_mode` o `operator_mode`, separato dal `top_npu` principale, per verificare compiler, descriptors, DMA e motori senza bloccare l'integrazione top-level definitiva.
+- [x] Rafforzare la regressione con casi end-to-end compiler -> golden -> RTL su grafi piccoli deterministici e fuzz workload-aware, includendo mismatch di shape, overflow SRAM, reuse aggressivo e overlap `DMA+compute`.
 
 ## Verifica e Stress
 

@@ -250,6 +250,32 @@ def _benchmark_cases(llm_model: Optional[str]) -> List[Dict[str, Any]]:
             "required_supporting_files": ["compiled_program.json"],
         },
         {
+            "case_id": "simulation_wrapper_transformer",
+            "description": (
+                "Verifica il simulation wrapper separato dal top-level con casi graph/operator "
+                "deterministici e fuzz workload-aware su mismatch, overflow, reuse e overlap."
+            ),
+            "requirement": "Voglio una NPU INT8 da 20 TOPS per transformer con batch 1-4.",
+            "num_candidates": 1,
+            "generator_backend": "heuristic",
+            "llm_model": None,
+            "expected_candidate_id": "balanced",
+            "expected_generator_backend": "heuristic",
+            "expected_requested_backend": "heuristic",
+            "expected_summary_values": [
+                (("simulation_wrapper", "passed"), True),
+                (("simulation_wrapper", "case_count"), 6),
+                (("simulation_wrapper", "deterministic_case_count"), 2),
+                (("simulation_wrapper", "fuzz_case_count"), 4),
+                (("simulation_wrapper", "detected_shape_mismatch_count"), 1),
+                (("simulation_wrapper", "detected_sram_overflow_count"), 1),
+                (("simulation_wrapper", "detected_reuse_hazard_count"), 1),
+                (("simulation_wrapper", "detected_dma_compute_overlap_count"), 1),
+                (("simulation_wrapper", "actual_program_dma_compute_overlap_cycles"), 2),
+            ],
+            "required_supporting_files": ["compiled_program.json", "simulation_wrapper_report.json"],
+        },
+        {
             "case_id": "llm_fallback_capture",
             "description": "Regressione del fallback LLM con artifact di richiesta persistiti.",
             "requirement": "Voglio una NPU INT8 da 10 TOPS per dense GEMM.",
@@ -313,6 +339,9 @@ def _validate_case(
     python_reference = tool_results.get("python_reference")
     if not python_reference or python_reference.passed is not True:
         failures.append("python_reference non valido.")
+    simulation_wrapper = tool_results.get("simulation_wrapper")
+    if not simulation_wrapper or simulation_wrapper.passed is not True:
+        failures.append("simulation_wrapper non valido.")
     reference_coverage = tool_results.get("reference_coverage")
     if not reference_coverage or reference_coverage.passed is not True:
         failures.append("reference_coverage non valido.")

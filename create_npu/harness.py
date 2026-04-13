@@ -8,6 +8,10 @@ from typing import Dict, List
 from create_npu.golden_model import evaluate_reference_cases
 from create_npu.models import GeneratedDesignBundle, ToolResult
 from create_npu.reference_coverage import evaluate_reference_coverage, format_reference_coverage_summary
+from create_npu.simulation_wrapper import (
+    evaluate_simulation_wrapper_artifact,
+    format_simulation_wrapper_summary,
+)
 
 
 class VerificationHarness:
@@ -19,6 +23,7 @@ class VerificationHarness:
     def run(self, bundle: GeneratedDesignBundle) -> List[ToolResult]:
         results = [
             self._run_python_reference(bundle),
+            self._run_simulation_wrapper(bundle),
             self._run_reference_coverage(bundle),
             self._run_verilator_lint(bundle),
             self._run_iverilog_sim(bundle),
@@ -78,6 +83,36 @@ class VerificationHarness:
             passed=passed,
             return_code=0 if passed else 1,
             summary=log_lines[0],
+            log_path=str(log_path),
+        )
+
+    def _run_simulation_wrapper(self, bundle: GeneratedDesignBundle) -> ToolResult:
+        report_path = self.output_dir / "simulation_wrapper_report.json"
+        passed, report, summary = evaluate_simulation_wrapper_artifact(report_path)
+        if not report.get("available"):
+            return ToolResult(
+                name="simulation_wrapper",
+                available=False,
+                passed=None,
+                return_code=None,
+                summary=summary,
+            )
+
+        log_path = self.log_dir / "simulation_wrapper.log"
+        log_lines = [summary]
+        for case in report.get("cases", []):
+            status = "OK" if case.get("passed") else "FAIL"
+            issue_kinds = ",".join(case.get("observed_issue_kinds", [])) or "-"
+            log_lines.append(
+                f"[{case.get('name')}] {status} mode={case.get('mode')} issues={issue_kinds}"
+            )
+        log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+        return ToolResult(
+            name="simulation_wrapper",
+            available=True,
+            passed=passed,
+            return_code=0 if passed else 1,
+            summary=format_simulation_wrapper_summary(report),
             log_path=str(log_path),
         )
 

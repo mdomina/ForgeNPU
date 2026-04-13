@@ -27,7 +27,12 @@ def generate_execution_report(
     spec: Optional[RequirementSpec] = None,
 ) -> Dict[str, Any]:
     report_path = output_dir / "execution_report.json"
-    report_payload = _build_execution_report(bundle=bundle, architecture=architecture, spec=spec)
+    report_payload = _build_execution_report(
+        bundle=bundle,
+        output_dir=output_dir,
+        architecture=architecture,
+        spec=spec,
+    )
     report_path.write_text(
         json.dumps(report_payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -41,6 +46,7 @@ def generate_execution_report(
 
 def _build_execution_report(
     bundle: GeneratedDesignBundle,
+    output_dir: Path,
     architecture: Optional[ArchitectureCandidate] = None,
     spec: Optional[RequirementSpec] = None,
 ) -> Dict[str, Any]:
@@ -87,6 +93,12 @@ def _build_execution_report(
     )
     compiled_program = payload.get("compiled_program", {})
     summary["compiled_program"] = compiled_program
+    simulation_wrapper_path = output_dir / "simulation_wrapper_report.json"
+    if simulation_wrapper_path.exists():
+        simulation_wrapper_report = json.loads(
+            simulation_wrapper_path.read_text(encoding="utf-8")
+        )
+        summary["simulation_wrapper"] = simulation_wrapper_report.get("summary", {})
     _augment_performance_counters_with_compiled_program(
         summary=summary,
         compiled_program=compiled_program,

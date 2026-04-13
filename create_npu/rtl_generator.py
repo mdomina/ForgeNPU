@@ -11,6 +11,7 @@ from create_npu.golden_model import (
     top_npu_reference,
 )
 from create_npu.models import ArchitectureCandidate, GeneratedDesignBundle, RequirementSpec
+from create_npu.simulation_wrapper import write_simulation_wrapper_report
 
 
 def emit_seed_rtl(
@@ -263,6 +264,12 @@ def emit_seed_rtl(
         json.dumps(compiled_program.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    simulation_wrapper_report = write_simulation_wrapper_report(
+        output_dir=output_dir,
+        compiled_program=compiled_program.to_dict(),
+        architecture=architecture,
+        spec=spec,
+    )
 
     notes = []
     if note:
@@ -314,7 +321,12 @@ def emit_seed_rtl(
         f"{compiled_program.compute_iterations} compute."
     )
 
-    supporting_files = [str(intent_path), str(reference_cases_path), str(compiled_program_path)]
+    supporting_files = [
+        str(intent_path),
+        str(reference_cases_path),
+        str(compiled_program_path),
+        str(simulation_wrapper_report["path"]),
+    ]
     if extra_supporting_files:
         supporting_files.extend(extra_supporting_files)
 

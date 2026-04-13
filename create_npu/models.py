@@ -94,6 +94,7 @@ class PipelineResult:
     tool_results: List[ToolResult]
     score: float
     output_dir: str
+    score_breakdown: Dict[str, Any] = field(default_factory=dict)
     report: Dict[str, Any] = field(default_factory=dict)
     candidate_results: List[Dict[str, Any]] = field(default_factory=list)
     environment: Dict[str, Any] = field(default_factory=dict)
@@ -108,6 +109,7 @@ class PipelineResult:
             "generated": self.generated.to_dict(),
             "tool_results": [result.to_dict() for result in self.tool_results],
             "score": self.score,
+            "score_breakdown": self.score_breakdown,
             "output_dir": self.output_dir,
             "report": self.report,
             "candidate_results": self.candidate_results,

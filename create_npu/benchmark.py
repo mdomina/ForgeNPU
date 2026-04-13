@@ -173,9 +173,9 @@ def _benchmark_cases(llm_model: Optional[str]) -> List[Dict[str, Any]]:
             "expected_generator_backend": "heuristic",
             "expected_requested_backend": "heuristic",
             "expected_summary_values": [
-                (("gemmini_reference_delta", "reference_name"), "gemmini_medium"),
+                (("gemmini_reference_delta", "reference_name"), "gemmini_large"),
                 (("gemmini_reference_delta", "reference_config", "dataflow"), "weight_stationary"),
-                (("gemmini_reference_delta", "candidate_vs_reference", "dataflow_match"), True),
+                (("gemmini_reference_delta", "candidate_vs_reference", "dataflow_match"), False),
                 (("gemmini_reference_delta", "convergence"), "converges"),
                 (("gemmini_reference_delta", "reference_config", "architecture_family"), "tiled_systolic_array"),
             ],

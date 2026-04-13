@@ -17,7 +17,7 @@ from create_npu.models import (
     RequirementSpec,
     ToolResult,
 )
-from create_npu.pipeline import CreateNPUPipeline
+from create_npu.pipeline import CreateNPUPipeline, _build_search_summary
 from create_npu.requirement_parser import RequirementParser
 from create_npu.rtl_generator import (
     _processing_element_template,
@@ -31,7 +31,7 @@ from create_npu.gemmini_reference import (
     compute_gemmini_delta,
     select_nearest_gemmini_reference,
 )
-from create_npu.scorer import score_design
+from create_npu.scorer import build_score_breakdown, score_design
 
 
 class RequirementParserTest(unittest.TestCase):
@@ -1166,8 +1166,178 @@ class ScoringTest(unittest.TestCase):
             score_design(throughput_spec, balanced_architecture, []),
         )
 
+    def test_score_design_rewards_quantitative_verification_quality(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 8 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=8.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+            target_frequency_mhz=1000.0,
+        )
+        architecture = ArchitectureCandidate(
+            candidate_id="balanced",
+            family="tiled_systolic_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=4,
+            pe_rows=32,
+            pe_cols=32,
+            pe_count=1024,
+            local_sram_kb_per_tile=512,
+            global_buffer_mb=4,
+            bus_width_bits=1024,
+            target_frequency_mhz=1000.0,
+            estimated_tops=8.0,
+            estimated_power_watts=20.0,
+            estimated_area_mm2=2.0,
+        )
+        tool_results = [
+            ToolResult(name="python_reference", available=True, passed=True, return_code=0, summary="OK"),
+            ToolResult(name="reference_coverage", available=True, passed=True, return_code=0, summary="OK"),
+            ToolResult(name="simulation_wrapper", available=True, passed=True, return_code=0, summary="OK"),
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            high_dir = temp_path / "high"
+            low_dir = temp_path / "low"
+            high_dir.mkdir()
+            low_dir.mkdir()
+            high_cov = high_dir / "coverage_report.json"
+            high_cov.write_text(
+                json.dumps({"summary": {"coverage_score": 100.0, "passes": True}}),
+                encoding="utf-8",
+            )
+            high_sim = high_dir / "simulation_wrapper_report.json"
+            high_sim.write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "case_count": 6,
+                            "pass_count": 6,
+                            "detected_shape_mismatch_count": 1,
+                            "detected_sram_overflow_count": 1,
+                            "detected_reuse_hazard_count": 1,
+                            "detected_dma_compute_overlap_count": 1,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            low_cov = low_dir / "coverage_report.json"
+            low_cov.write_text(
+                json.dumps({"summary": {"coverage_score": 25.0, "passes": True}}),
+                encoding="utf-8",
+            )
+            low_sim = low_dir / "simulation_wrapper_report.json"
+            low_sim.write_text(
+                json.dumps(
+                    {
+                        "summary": {
+                            "case_count": 6,
+                            "pass_count": 2,
+                            "detected_shape_mismatch_count": 0,
+                            "detected_sram_overflow_count": 1,
+                            "detected_reuse_hazard_count": 0,
+                            "detected_dma_compute_overlap_count": 0,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            high_score = score_design(
+                spec=spec,
+                architecture=architecture,
+                tool_results=tool_results,
+                supporting_files=[str(high_cov), str(high_sim)],
+            )
+            low_score = score_design(
+                spec=spec,
+                architecture=architecture,
+                tool_results=tool_results,
+                supporting_files=[str(low_cov), str(low_sim)],
+            )
+
+        self.assertGreater(high_score, low_score)
+
+    def test_score_breakdown_exposes_quality_signals(self) -> None:
+        spec = RequirementSpec(
+            original_text="NPU INT8 4 TOPS dense GEMM.",
+            numeric_precision="INT8",
+            throughput_value=4.0,
+            throughput_unit="TOPS",
+            workload_type="dense_gemm",
+        )
+        architecture = ArchitectureCandidate(
+            candidate_id="balanced",
+            family="tiled_systolic_array",
+            tile_rows=16,
+            tile_cols=16,
+            tile_count=4,
+            pe_rows=32,
+            pe_cols=32,
+            pe_count=1024,
+            local_sram_kb_per_tile=512,
+            global_buffer_mb=4,
+            bus_width_bits=1024,
+            target_frequency_mhz=1000.0,
+            estimated_tops=4.0,
+            estimated_power_watts=20.0,
+            estimated_area_mm2=2.0,
+        )
+        breakdown = build_score_breakdown(
+            spec=spec,
+            architecture=architecture,
+            tool_results=[],
+        )
+
+        self.assertIn("coverage_quality", breakdown["components"])
+        self.assertIn("simulation_quality", breakdown["components"])
+        self.assertIn("quality_signals", breakdown)
+        self.assertIn("coverage_score_pct", breakdown["quality_signals"])
+        self.assertIn("simulation_wrapper_case_pass_ratio", breakdown["quality_signals"])
+
 
 class PipelineTest(unittest.TestCase):
+    def test_build_search_summary_includes_score_breakdown(self) -> None:
+        candidate_results = [
+            {
+                "candidate_id": "balanced",
+                "score": 81.5,
+                "score_breakdown": {"total_score": 81.5, "components": {"coverage_quality": {}}},
+            },
+            {
+                "candidate_id": "throughput_max_b1",
+                "score": 74.25,
+                "score_breakdown": {
+                    "total_score": 74.25,
+                    "components": {"simulation_quality": {}},
+                },
+            },
+            {
+                "candidate_id": "efficiency",
+                "score": 68.0,
+                "score_breakdown": {"total_score": 68.0, "components": {}},
+            },
+        ]
+
+        summary = _build_search_summary(
+            candidate_results=candidate_results,
+            requested_candidate_count=3,
+            selected_candidate_id="balanced",
+        )
+
+        self.assertEqual(summary["selected_candidate_rank"], 1)
+        self.assertEqual(summary["ranked_candidates"][0]["candidate_id"], "balanced")
+        self.assertEqual(summary["ranked_candidates"][0]["score_breakdown"]["total_score"], 81.5)
+        self.assertEqual(
+            summary["ranked_candidates"][1]["score_breakdown"]["components"],
+            {"simulation_quality": {}},
+        )
+        self.assertEqual(summary["variant_candidate_count"], 1)
+
     def test_pipeline_generates_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             pipeline = CreateNPUPipeline(base_output_dir=Path(temp_dir))
@@ -1492,6 +1662,13 @@ class PipelineTest(unittest.TestCase):
             payload = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["generated"]["primary_module"], "top_npu")
             self.assertEqual(len(payload["candidate_results"]), 3)
+            self.assertIn("score_breakdown", payload)
+            self.assertIn("components", payload["score_breakdown"])
+            self.assertIn("quality_signals", payload["score_breakdown"])
+            self.assertEqual(payload["score_breakdown"]["total_score"], payload["score"])
+            self.assertTrue(
+                all("score_breakdown" in candidate for candidate in payload["candidate_results"])
+            )
             self.assertIn("environment", payload)
             self.assertIn("report", payload)
             python_reference = next(
@@ -2219,6 +2396,15 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(run_sample["candidate_labels"]["throughput_max"], "bad")
             self.assertEqual(run_sample["candidate_labels"]["efficiency"], "bad")
             self.assertEqual(run_sample["learning_feedback_summary"]["accepted_candidate_count"], 1)
+            self.assertEqual(run_sample["selected_score_breakdown"]["total_score"], result.score)
+            self.assertIn(
+                "coverage_quality",
+                run_sample["selected_score_breakdown"]["components"],
+            )
+            self.assertIn(
+                "simulation_quality",
+                run_sample["selected_score_breakdown"]["components"],
+            )
 
             candidate_samples = json.loads(
                 Path(dataset["candidate_samples_path"]).read_text(encoding="utf-8")
@@ -2229,6 +2415,9 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(selected_sample["label"], "good")
             self.assertIn("selected_best", selected_sample["label_reasons"])
             self.assertTrue(selected_sample["learning_feedback"]["accept"])
+            self.assertEqual(selected_sample["score_breakdown"]["total_score"], selected_sample["score"])
+            self.assertIn("coverage_quality", selected_sample["score_breakdown"]["components"])
+            self.assertIn("simulation_quality", selected_sample["score_breakdown"]["components"])
             self.assertEqual(
                 selected_sample["learning_feedback"]["feedback_bucket"],
                 "accept_selected_verified",
@@ -2732,13 +2921,13 @@ class BenchmarkTest(unittest.TestCase):
                         architecture_family="tiled_systolic_array",
                         extra_summary={
                             "gemmini_reference_delta": {
-                                "reference_name": "gemmini_medium",
+                                "reference_name": "gemmini_large",
                                 "reference_config": {
                                     "dataflow": "weight_stationary",
                                     "architecture_family": "tiled_systolic_array",
                                 },
                                 "candidate_vs_reference": {
-                                    "dataflow_match": True,
+                                    "dataflow_match": False,
                                 },
                                 "convergence": "converges",
                             },

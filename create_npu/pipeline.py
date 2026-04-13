@@ -14,7 +14,7 @@ from create_npu.models import PipelineResult
 from create_npu.requirement_parser import RequirementParser
 from create_npu.reporting import generate_execution_report
 from create_npu.rtl_generator import emit_seed_rtl
-from create_npu.scorer import score_design
+from create_npu.scorer import build_score_breakdown
 
 
 class CreateNPUPipeline:
@@ -128,6 +128,7 @@ class CreateNPUPipeline:
         selected_generated = best_candidate["generated"]
         selected_tool_results = best_candidate["tool_results"]
         score = best_candidate["score"]
+        score_breakdown = best_candidate.get("score_breakdown", {})
 
         self._write_candidate_index(run_dir=run_dir, candidate_results=candidate_results)
 
@@ -138,6 +139,7 @@ class CreateNPUPipeline:
             tool_results=self._tool_results_from_dicts(selected_tool_results),
             score=score,
             output_dir=str(run_dir),
+            score_breakdown=score_breakdown,
             report=best_candidate.get("report", {}),
             candidate_results=candidate_results,
             environment=environment,
@@ -182,12 +184,20 @@ class CreateNPUPipeline:
         )
         generated.supporting_files.append(str(report["path"]))
         tool_results = VerificationHarness(output_dir).run(generated)
-        score = score_design(spec=spec, architecture=architecture, tool_results=tool_results)
+        score_breakdown = build_score_breakdown(
+            spec=spec,
+            architecture=architecture,
+            tool_results=tool_results,
+            report_summary=report["summary"],
+            supporting_files=generated.supporting_files,
+        )
+        score = float(score_breakdown["total_score"])
         return {
             "generated": generated,
             "tool_results": tool_results,
             "report": report,
             "score": score,
+            "score_breakdown": score_breakdown,
             "output_dir": str(output_dir),
         }
 
@@ -240,6 +250,7 @@ def _candidate_payload(architecture, evaluation: Dict[str, Any]) -> Dict[str, An
         "tool_results": [result.to_dict() for result in evaluation["tool_results"]],
         "report": evaluation["report"],
         "score": evaluation["score"],
+        "score_breakdown": evaluation.get("score_breakdown", {}),
         "output_dir": evaluation["output_dir"],
     }
 
@@ -282,6 +293,7 @@ def _variant_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "output_dir": result["output_dir"],
         "report": result["report"],
         "tool_results": tool_results,
+        "score_breakdown": result.get("score_breakdown", {}),
         "passed_tools": [
             tool["name"]
             for tool in tool_results
@@ -353,6 +365,7 @@ def _build_search_summary(
             {
                 "candidate_id": str(candidate["candidate_id"]),
                 "score": float(candidate["score"]),
+                "score_breakdown": candidate.get("score_breakdown", {}),
                 "profile": canonical_candidate_profile(str(candidate["candidate_id"])),
                 "variant_index": candidate_variant_index(str(candidate["candidate_id"])),
             }
